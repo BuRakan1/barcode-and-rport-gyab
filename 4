@@ -1,0 +1,2171 @@
+ def manage_multi_section_courses(self):
+        """وظيفة إدارة الدورات متعددة الفصول"""
+        # إنشاء نافذة جديدة
+        multi_window = tk.Toplevel(self.root)
+        multi_window.bind("<Motion>", lambda e: self.root.reset_activity_timer() if hasattr(self.root,
+                                                                                            'reset_activity_timer') else None)
+        multi_window.title("إدارة الفصول و تصدير الكشوفات")
+        multi_window.geometry("900x600")
+        multi_window.configure(bg=self.colors["light"])
+        multi_window.grab_set()
+        multi_window.resizable(True, True)
+
+        # توسيط النافذة
+        x = (multi_window.winfo_screenwidth() - 900) // 2
+        y = (multi_window.winfo_screenheight() - 600) // 2
+        multi_window.geometry(f"900x600+{x}+{y}")
+
+        # عنوان النافذة
+        tk.Label(
+            multi_window,
+            text="إدارة الفصول و تصدير الكشوفات",
+            font=self.fonts["large_title"],
+            bg=self.colors["primary"],
+            fg="white",
+            padx=10, pady=10
+        ).pack(fill=tk.X)
+
+        # تعديل: إضافة إطار جديد لعرض معلومات إجمالي المتدربين تحت العنوان مباشرة
+        students_info_frame = tk.Frame(multi_window, bg=self.colors["light"], padx=10, pady=5)
+        students_info_frame.pack(fill=tk.X)
+
+        # تعديل: متغير لعرض إجمالي عدد المتدربين
+        total_students_var = tk.StringVar(value="")
+        total_students_label = tk.Label(
+            students_info_frame,
+            textvariable=total_students_var,
+            font=self.fonts["text_bold"],
+            bg=self.colors["light"],
+            fg=self.colors["primary"]
+        )
+        total_students_label.pack(pady=5)
+
+        # إطار اختيار الدورة
+        course_frame = tk.Frame(multi_window, bg=self.colors["light"], padx=10, pady=10)
+        course_frame.pack(fill=tk.X)
+
+        tk.Label(
+            course_frame,
+            text="اختيار الدورة:",
+            font=self.fonts["text_bold"],
+            bg=self.colors["light"]
+        ).pack(side=tk.RIGHT, padx=5)
+
+        # الحصول على قائمة الدورات
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT DISTINCT course_name FROM course_sections")
+        multi_section_courses = [row[0] for row in cursor.fetchall()]
+
+        course_var = tk.StringVar()
+        course_dropdown = ttk.Combobox(
+            course_frame,
+            textvariable=course_var,
+            values=multi_section_courses,
+            width=30,
+            font=self.fonts["text"]
+        )
+        course_dropdown.pack(side=tk.RIGHT, padx=5)
+
+        # زر تحديث قائمة الدورات
+        refresh_btn = tk.Button(
+            course_frame,
+            text="تحديث",
+            font=self.fonts["text_bold"],
+            bg=self.colors["secondary"],
+            fg="white",
+            padx=10, pady=2,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: update_sections_list()
+        )
+        refresh_btn.pack(side=tk.LEFT, padx=5)
+
+        #زر تعديل تاريخ الدورة
+        edit_course_info_btn = tk.Button(
+            course_frame,
+            text="تعديل تواريخ الدورة",
+            font=self.fonts["text_bold"],
+            bg=self.colors["warning"],
+            fg="white",
+            padx=10, pady=2,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: self.edit_course_dates(course_var.get())
+        )
+        edit_course_info_btn.pack(side=tk.LEFT, padx=5)
+
+        # إضافة زر حذف الدورة كاملة (للمشرفين فقط)
+        if self.current_user["permissions"]["is_admin"]:
+            delete_course_btn = tk.Button(
+                course_frame,
+                text="حذف الدورة كاملة",
+                font=self.fonts["text_bold"],
+                bg=self.colors["danger"],
+                fg="white",
+                padx=10, pady=2,
+                bd=0, relief=tk.FLAT,
+                cursor="hand2",
+                command=lambda: delete_entire_course()
+            )
+            delete_course_btn.pack(side=tk.LEFT, padx=5)
+
+
+        # إطار عرض الفصول
+        sections_frame = tk.LabelFrame(
+            multi_window,
+            text="الفصول المتاحة",
+            font=self.fonts["subtitle"],
+            bg=self.colors["light"],
+            fg=self.colors["dark"],
+            padx=10, pady=10
+        )
+        sections_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # قائمة الفصول
+        list_frame = tk.Frame(sections_frame, bg=self.colors["light"])
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        list_scroll = tk.Scrollbar(list_frame)
+        list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        sections_listbox = tk.Listbox(
+            list_frame,
+            font=self.fonts["text"],
+            selectbackground=self.colors["primary"],
+            selectforeground="white",
+            yscrollcommand=list_scroll.set
+        )
+        sections_listbox.pack(fill=tk.BOTH, expand=True)
+        list_scroll.config(command=sections_listbox.yview)
+
+        # إطار التفاصيل
+        details_frame = tk.Frame(sections_frame, bg=self.colors["light"], width=350)
+        details_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=5, pady=5)
+
+        # عنوان التفاصيل
+        section_title_var = tk.StringVar(value="اختر فصلاً لعرض تفاصيله")
+        section_title = tk.Label(
+            details_frame,
+            textvariable=section_title_var,
+            font=self.fonts["text_bold"],
+            bg=self.colors["light"],
+            fg=self.colors["primary"]
+        )
+        section_title.pack(pady=(0, 10))
+
+        # تعديل: نحتفظ بمتغير عدد المتدربين للاستخدام الداخلي دون عرضه في إطار التفاصيل
+        students_count_var = tk.StringVar(value="")
+
+        # أزرار الإجراءات
+        actions_frame = tk.Frame(details_frame, bg=self.colors["light"], pady=10)
+        actions_frame.pack(fill=tk.X)
+
+        export_attendance_btn = tk.Button(
+            actions_frame,
+            text="تصدير كشف حضور",
+            font=self.fonts["text_bold"],
+            bg=self.colors["primary"],
+            fg="white",
+            padx=10, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: export_section_attendance_sheet()
+        )
+        export_attendance_btn.pack(fill=tk.X, pady=5)
+
+        export_diligence_btn = tk.Button(
+            actions_frame,
+            text="تصدير كشف المواظبة والسلوك",
+            font=self.fonts["text_bold"],
+            bg="#8E44AD",
+            fg="white",
+            padx=10, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: export_section_diligence()
+        )
+        export_diligence_btn.pack(fill=tk.X, pady=5)
+
+        view_students_btn = tk.Button(
+            actions_frame,
+            text="عرض المتدربين وإدارة الفصول",
+            font=self.fonts["text_bold"],
+            bg=self.colors["success"],
+            fg="white",
+            padx=10, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: manage_section_students()
+        )
+        view_students_btn.pack(fill=tk.X, pady=5)
+
+        rename_section_btn = tk.Button(
+            actions_frame,
+            text="تغيير اسم الفصل",
+            font=self.fonts["text_bold"],
+            bg=self.colors["warning"],
+            fg="white",
+            padx=10, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: rename_section()
+        )
+        rename_section_btn.pack(fill=tk.X, pady=5)
+
+        # إضافة زر حذف الفصل مع ترحيل المتدربين (متاح للجميع)
+        delete_section_btn = tk.Button(
+            actions_frame,
+            text="حذف الفصل مع ترحيل المتدربين",
+            font=self.fonts["text_bold"],
+            bg=self.colors["danger"],
+            fg="white",
+            padx=10, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: delete_section_with_transfer()
+        )
+        delete_section_btn.pack(fill=tk.X, pady=5)
+
+        # الإطار السفلي للأزرار
+        bottom_frame = tk.Frame(multi_window, bg=self.colors["light"], pady=10)
+        bottom_frame.pack(fill=tk.X, padx=10)
+
+        add_section_btn = tk.Button(
+            bottom_frame,
+            text="إضافة فصل جديد",
+            font=self.fonts["text_bold"],
+            bg=self.colors["success"],
+            fg="white",
+            padx=15, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: add_new_section()
+        )
+        add_section_btn.pack(side=tk.LEFT, padx=5)
+
+        # هنا يتم إضافة الزر الجديد
+        import_sections_btn = tk.Button(
+            bottom_frame,
+            text="استيراد تحديثات الفصول",
+            font=self.fonts["text_bold"],
+            bg="#FF9800",  # لون برتقالي للتمييز
+            fg="white",
+            padx=15, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: import_section_updates()
+        )
+        import_sections_btn.pack(side=tk.LEFT, padx=5)
+
+        # تعريف دالة للإغلاق مع تحديث البيانات
+        def on_close_multi_window():
+            multi_window.destroy()
+            self.update_statistics()
+            self.update_students_tree()
+            self.update_attendance_display()  # إضافة هذا السطر لتحديث عرض سجل الحضور أيضاً
+
+        close_btn = tk.Button(
+            bottom_frame,
+            text="إغلاق",
+            font=self.fonts["text_bold"],
+            bg=self.colors["dark"],
+            fg="white",
+            padx=15, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=on_close_multi_window  # استخدام الدالة الجديدة بدلاً من multi_window.destroy
+        )
+        close_btn.pack(side=tk.RIGHT, padx=5)
+
+        def import_section_updates():
+            """استيراد تحديثات توزيع المتدربين على الفصول من ملف Excel مع دعم الأعمدة باللغة العربية"""
+            selected_course = course_var.get().strip()
+            if not selected_course:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار دورة أولاً")
+                return
+
+            # اختيار ملف Excel
+            file_path = filedialog.askopenfilename(
+                title="اختر ملف تحديثات الفصول",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
+
+            if not file_path:
+                return
+
+            # إنشاء نافذة تقدم العملية
+            progress_window = tk.Toplevel(multi_window)
+            progress_window.title("استيراد تحديثات الفصول")
+            progress_window.geometry("450x180")
+            progress_window.configure(bg=self.colors["light"])
+            progress_window.transient(multi_window)
+            progress_window.grab_set()
+
+            # توسيط النافذة
+            x = (progress_window.winfo_screenwidth() - 450) // 2
+            y = (progress_window.winfo_screenheight() - 180) // 2
+            progress_window.geometry(f"450x180+{x}+{y}")
+
+            tk.Label(
+                progress_window,
+                text=f"جاري معالجة تحديثات الفصول لدورة: {selected_course}",
+                font=self.fonts["text_bold"],
+                bg=self.colors["light"],
+                pady=10
+            ).pack()
+
+            progress_var = tk.DoubleVar()
+            progress_bar = ttk.Progressbar(
+                progress_window,
+                variable=progress_var,
+                maximum=100,
+                length=400
+            )
+            progress_bar.pack(pady=10)
+
+            status_label = tk.Label(
+                progress_window,
+                text="جاري قراءة ملف Excel...",
+                font=self.fonts["text"],
+                bg=self.colors["light"]
+            )
+            status_label.pack(pady=5)
+
+            progress_window.update()
+
+            try:
+                # قراءة ملف Excel
+                progress_var.set(10)
+                status_label.config(text="جاري قراءة ملف Excel...")
+                progress_window.update()
+
+                df = pd.read_excel(file_path)
+
+                # تعريف ترجمة أسماء الأعمدة (دعم العربية والإنجليزية)
+                column_mapping = {
+                    'رقم الهوية': 'national_id',
+                    'الفصل': 'section_name',
+                    'اسم الفصل': 'section_name',
+                    'national_id': 'national_id',
+                    'section_name': 'section_name'
+                }
+
+                # تحويل أسماء الأعمدة من العربية إلى الإنجليزية
+                rename_dict = {}
+                for orig_col in df.columns:
+                    if orig_col in column_mapping:
+                        rename_dict[orig_col] = column_mapping[orig_col]
+
+                if rename_dict:
+                    df = df.rename(columns=rename_dict)
+
+                # التحقق من وجود الأعمدة المطلوبة
+                has_id = any(col in ["رقم الهوية", "national_id"] for col in df.columns)
+                has_section = any(col in ["الفصل", "اسم الفصل", "section_name"] for col in df.columns)
+
+                if not (has_id and has_section):
+                    progress_window.destroy()
+                    messagebox.showwarning("تنبيه",
+                                           f"يجب أن يحتوي ملف التحديثات على الأعمدة التالية:\n\n" +
+                                           "• رقم الهوية (national_id)\n" +
+                                           "• الفصل (section_name)")
+                    return
+
+                # التحقق من صحة الفصول المذكورة في الملف
+                progress_var.set(20)
+                status_label.config(text="التحقق من صحة بيانات الفصول...")
+                progress_window.update()
+
+                # الحصول على قائمة الفصول المتاحة في الدورة
+                cursor = self.conn.cursor()
+                cursor.execute("""
+                    SELECT section_name
+                    FROM course_sections
+                    WHERE course_name=?
+                """, (selected_course,))
+
+                available_sections = {row[0] for row in cursor.fetchall()}
+
+                # التحقق من وجود الفصول المذكورة في الملف
+                unique_sections = set(df['section_name'].dropna())
+                invalid_sections = unique_sections - available_sections
+
+                if invalid_sections:
+                    progress_window.destroy()
+                    messagebox.showwarning("تنبيه",
+                                           f"توجد فصول غير موجودة في الدورة: {', '.join(invalid_sections)}\n\n" +
+                                           "الفصول المتاحة هي: " + ', '.join(available_sections))
+                    return
+
+                # التحقق من وجود المتدربين المذكورين في ملف التحديثات
+                progress_var.set(30)
+                status_label.config(text="التحقق من بيانات المتدربين...")
+                progress_window.update()
+
+                # الحصول على قائمة المتدربين في الدورة الحالية
+                cursor.execute("""
+                    SELECT national_id, name
+                    FROM trainees
+                    WHERE course=? AND is_excluded=0
+                """, (selected_course,))
+
+                students_dict = {row[0]: row[1] for row in cursor.fetchall()}
+
+                # التحقق من وجود جميع المتدربين المذكورين في الملف
+                student_ids = df['national_id'].astype(str).tolist()
+                invalid_students = [sid for sid in student_ids if sid not in students_dict]
+
+                if invalid_students:
+                    if len(invalid_students) > 5:
+                        invalid_display = ', '.join(invalid_students[:5]) + f' وغيرهم ({len(invalid_students) - 5})'
+                    else:
+                        invalid_display = ', '.join(invalid_students)
+
+                    proceed = messagebox.askyesno("تنبيه - متدربين غير موجودين",
+                                                  f"هناك {len(invalid_students)} متدرب غير موجود في الدورة: {invalid_display}\n\n" +
+                                                  "هل تريد المتابعة وتجاهل هؤلاء المتدربين؟")
+
+                    if not proceed:
+                        progress_window.destroy()
+                        return
+
+                # تحضير التغييرات
+                progress_var.set(50)
+                status_label.config(text="تحضير التغييرات...")
+                progress_window.update()
+
+                # الحصول على التوزيع الحالي للمتدربين على الفصول
+                cursor.execute("""
+                    SELECT national_id, section_name
+                    FROM student_sections
+                    WHERE course_name=?
+                """, (selected_course,))
+
+                current_assignments = {row[0]: row[1] for row in cursor.fetchall()}
+
+                # تحضير قائمة التغييرات
+                changes = []
+                no_changes = []
+                new_assignments = []
+
+                for _, row in df.iterrows():
+                    student_id = str(row['national_id']).strip()
+                    new_section = str(row['section_name']).strip()
+
+                    # تخطي المتدربين غير الموجودين
+                    if student_id not in students_dict:
+                        continue
+
+                    # التحقق إذا كان المتدرب في فصل مختلف حاليًا
+                    if student_id in current_assignments:
+                        current_section = current_assignments[student_id]
+
+                        if current_section != new_section:
+                            # تغيير الفصل
+                            changes.append((student_id, students_dict[student_id], current_section, new_section))
+                        else:
+                            # لا تغيير
+                            no_changes.append((student_id, students_dict[student_id], current_section))
+                    else:
+                        # متدرب جديد ليس في أي فصل سابقًا
+                        new_assignments.append((student_id, students_dict[student_id], new_section))
+
+                # عرض ملخص التغييرات المقترحة
+                progress_var.set(70)
+                status_label.config(text="تجهيز ملخص التغييرات...")
+                progress_window.update()
+
+                summary = f"ملخص التغييرات:\n\n"
+                summary += f"• عدد المتدربين الذين سيتم نقلهم بين الفصول: {len(changes)}\n"
+                summary += f"• عدد المتدربين الجدد المراد تسجيلهم في فصول: {len(new_assignments)}\n"
+                summary += f"• عدد المتدربين بدون تغيير: {len(no_changes)}\n"
+
+                if invalid_students:
+                    summary += f"• عدد المتدربين غير الموجودين في الدورة: {len(invalid_students)} (سيتم تجاهلهم)\n"
+
+                progress_window.destroy()
+
+                # عرض نافذة ملخص التغييرات
+                summary_window = tk.Toplevel(multi_window)
+                summary_window.title("ملخص التغييرات المقترحة")
+                summary_window.geometry("600x500")
+                summary_window.configure(bg=self.colors["light"])
+                summary_window.transient(multi_window)
+                summary_window.grab_set()
+
+                # توسيط النافذة
+                x = (summary_window.winfo_screenwidth() - 600) // 2
+                y = (summary_window.winfo_screenheight() - 500) // 2
+                summary_window.geometry(f"600x500+{x}+{y}")
+
+                tk.Label(
+                    summary_window,
+                    text="ملخص التغييرات المقترحة",
+                    font=self.fonts["title"],
+                    bg=self.colors["primary"],
+                    fg="white",
+                    padx=10, pady=10
+                ).pack(fill=tk.X)
+
+                # عرض ملخص التغييرات
+                summary_frame = tk.Frame(summary_window, bg=self.colors["light"], padx=10, pady=10)
+                summary_frame.pack(fill=tk.BOTH, expand=True)
+
+                tk.Label(
+                    summary_frame,
+                    text=summary,
+                    font=self.fonts["text"],
+                    bg=self.colors["light"],
+                    justify=tk.RIGHT,
+                    anchor=tk.E
+                ).pack(fill=tk.X, pady=10)
+
+                # إنشاء نوتبوك لعرض التفاصيل
+                details_notebook = ttk.Notebook(summary_frame)
+                details_notebook.pack(fill=tk.BOTH, expand=True, pady=10)
+
+                # تبويب المتدربين المنقولين
+                if changes:
+                    changes_frame = tk.Frame(details_notebook, bg=self.colors["light"])
+                    details_notebook.add(changes_frame, text=f"متدربين سيتم نقلهم ({len(changes)})")
+
+                    changes_list = tk.Text(changes_frame, font=self.fonts["text"], width=70, height=15)
+                    changes_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+                    for student_id, name, old_section, new_section in changes:
+                        changes_list.insert(tk.END,
+                                            f"{name} ({student_id}): من فصل {old_section} إلى فصل {new_section}\n")
+
+                    changes_list.configure(state="disabled")
+
+                # تبويب المتدربين الجدد
+                if new_assignments:
+                    new_frame = tk.Frame(details_notebook, bg=self.colors["light"])
+                    details_notebook.add(new_frame, text=f"تسجيلات جديدة ({len(new_assignments)})")
+
+                    new_list = tk.Text(new_frame, font=self.fonts["text"], width=70, height=15)
+                    new_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+                    for student_id, name, section in new_assignments:
+                        new_list.insert(tk.END, f"{name} ({student_id}): تسجيل في فصل {section}\n")
+
+                    new_list.configure(state="disabled")
+
+                # أزرار التأكيد أو الإلغاء
+                button_frame = tk.Frame(summary_window, bg=self.colors["light"], pady=10)
+                button_frame.pack(fill=tk.X, padx=10)
+
+                def apply_changes():
+                    # تنفيذ التغييرات
+                    try:
+                        current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                        progress_window = tk.Toplevel(summary_window)
+                        progress_window.title("تنفيذ التغييرات")
+                        progress_window.geometry("450x180")
+                        progress_window.configure(bg=self.colors["light"])
+                        progress_window.transient(summary_window)
+                        progress_window.grab_set()
+
+                        # توسيط النافذة
+                        x = (progress_window.winfo_screenwidth() - 450) // 2
+                        y = (progress_window.winfo_screenheight() - 180) // 2
+                        progress_window.geometry(f"450x180+{x}+{y}")
+
+                        tk.Label(
+                            progress_window,
+                            text="جاري تنفيذ التغييرات...",
+                            font=self.fonts["text_bold"],
+                            bg=self.colors["light"],
+                            pady=10
+                        ).pack()
+
+                        progress_var = tk.DoubleVar()
+                        progress_bar = ttk.Progressbar(
+                            progress_window,
+                            variable=progress_var,
+                            maximum=100,
+                            length=400
+                        )
+                        progress_bar.pack(pady=10)
+
+                        status_label = tk.Label(
+                            progress_window,
+                            text="جاري الإعداد...",
+                            font=self.fonts["text"],
+                            bg=self.colors["light"]
+                        )
+                        status_label.pack(pady=5)
+
+                        progress_window.update()
+
+                        with self.conn:
+                            # تنفيذ التغييرات
+                            total_operations = len(changes) + len(new_assignments)
+                            operations_done = 0
+
+                            # 1. تحديث المتدربين الذين سيتم نقلهم
+                            if changes:
+                                status_label.config(text="جاري تعديل تسجيلات الفصول الحالية...")
+                                progress_window.update()
+
+                                for student_id, _, _, new_section in changes:
+                                    self.conn.execute("""
+                                        UPDATE student_sections
+                                        SET section_name=?, assigned_date=?
+                                        WHERE national_id=? AND course_name=?
+                                    """, (new_section, current_date, student_id, selected_course))
+
+                                    operations_done += 1
+                                    progress_percent = (operations_done / total_operations) * 100
+                                    progress_var.set(progress_percent)
+                                    progress_window.update()
+
+                            # 2. إضافة المتدربين الجدد
+                            if new_assignments:
+                                status_label.config(text="جاري إضافة تسجيلات جديدة للفصول...")
+                                progress_window.update()
+
+                                for student_id, _, section in new_assignments:
+                                    self.conn.execute("""
+                                        INSERT OR REPLACE INTO student_sections
+                                        (national_id, course_name, section_name, assigned_date)
+                                        VALUES (?, ?, ?, ?)
+                                    """, (student_id, selected_course, section, current_date))
+
+                                    operations_done += 1
+                                    progress_percent = (operations_done / total_operations) * 100
+                                    progress_var.set(progress_percent)
+                                    progress_window.update()
+
+                        progress_var.set(100)
+                        status_label.config(text="تم تنفيذ التغييرات بنجاح!")
+                        progress_window.update()
+
+                        # إغلاق نافذة التقدم بعد ثانيتين
+                        progress_window.after(2000, progress_window.destroy)
+
+                        # إغلاق نافذة الملخص
+                        summary_window.destroy()
+
+                        # عرض رسالة نجاح
+                        messagebox.showinfo("نجاح", "تم تنفيذ تحديثات الفصول بنجاح!")
+
+                        # تحديث القوائم
+                        update_sections_list()
+
+                    except Exception as e:
+                        try:
+                            progress_window.destroy()
+                        except:
+                            pass
+
+                        messagebox.showerror("خطأ", f"حدث خطأ أثناء تنفيذ التغييرات: {str(e)}")
+
+                confirm_btn = tk.Button(
+                    button_frame,
+                    text="تنفيذ التغييرات",
+                    font=self.fonts["text_bold"],
+                    bg=self.colors["success"],
+                    fg="white",
+                    padx=15, pady=5,
+                    bd=0, relief=tk.FLAT,
+                    cursor="hand2",
+                    command=apply_changes
+                )
+                confirm_btn.pack(side=tk.LEFT, padx=5)
+
+                cancel_btn = tk.Button(
+                    button_frame,
+                    text="إلغاء",
+                    font=self.fonts["text_bold"],
+                    bg=self.colors["danger"],
+                    fg="white",
+                    padx=15, pady=5,
+                    bd=0, relief=tk.FLAT,
+                    cursor="hand2",
+                    command=summary_window.destroy
+                )
+                cancel_btn.pack(side=tk.RIGHT, padx=5)
+
+            except Exception as e:
+                try:
+                    progress_window.destroy()
+                except:
+                    pass
+
+                messagebox.showerror("خطأ", f"حدث خطأ أثناء معالجة ملف التحديثات: {str(e)}")
+
+        # الوظائف المساعدة ضمن النافذة
+        def update_sections_list():
+            """تحديث قائمة الفصول المتاحة للدورة المحددة"""
+            selected_course = course_var.get().strip()
+            sections_listbox.delete(0, tk.END)
+
+            # تعديل: إعادة ضبط متغيرات العرض
+            section_title_var.set("اختر فصلاً لعرض تفاصيله")
+            students_count_var.set("")
+
+            if not selected_course:
+                total_students_var.set("")
+                return
+
+            # تعديل: تحديث إجمالي عدد المتدربين في الدورة
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(DISTINCT t.national_id)
+                FROM trainees t
+                WHERE t.course=? AND t.is_excluded=0
+            """, (selected_course,))
+
+            total_count = cursor.fetchone()[0]
+            total_students_var.set(f"إجمالي المتدربين الملتحقين بدورة \"{selected_course}\": {total_count}")
+
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT section_name
+                FROM course_sections
+                WHERE course_name=?
+                ORDER BY section_name
+            """, (selected_course,))
+
+            sections = cursor.fetchall()
+
+            for section in sections:
+                sections_listbox.insert(tk.END, section[0])
+
+        def on_section_select(event=None):
+            """عند اختيار فصل من القائمة"""
+            selected_indices = sections_listbox.curselection()
+            if not selected_indices:
+                return
+
+            selected_course = course_var.get().strip()
+            selected_section = sections_listbox.get(selected_indices[0])
+
+            if not selected_course or not selected_section:
+                return
+
+            # تحديث عنوان التفاصيل
+            section_title_var.set(f"فصل: {selected_section}")
+
+            # حساب عدد المتدربين
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM student_sections
+                WHERE course_name=? AND section_name=?
+            """, (selected_course, selected_section))
+
+            count = cursor.fetchone()[0]
+            students_count_var.set(f"عدد المتدربين في فصل \"{selected_section}\": {count}")
+
+            # تعديل: تحديث عرض عدد المتدربين في العنوان
+            total_students_var.set(students_count_var.get())
+
+        def add_new_section():
+            """إضافة فصل جديد للدورة المحددة"""
+            selected_course = course_var.get().strip()
+
+            if not selected_course:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار دورة أولاً")
+                return
+
+            section_name = simpledialog.askstring("إضافة فصل", "أدخل اسم الفصل الجديد:")
+
+            if not section_name:
+                return
+
+            # التحقق من وجود الفصل
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM course_sections
+                WHERE course_name=? AND section_name=?
+            """, (selected_course, section_name))
+
+            if cursor.fetchone()[0] > 0:
+                messagebox.showwarning("تنبيه", f"الفصل '{section_name}' موجود بالفعل في هذه الدورة")
+                return
+
+            # إضافة الفصل الجديد
+            try:
+                current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with self.conn:
+                    self.conn.execute("""
+                        INSERT INTO course_sections (course_name, section_name, created_date)
+                        VALUES (?, ?, ?)
+                    """, (selected_course, section_name, current_date))
+
+                messagebox.showinfo("نجاح", f"تم إضافة الفصل '{section_name}' بنجاح")
+                update_sections_list()
+            except Exception as e:
+                messagebox.showerror("خطأ", f"حدث خطأ أثناء إضافة الفصل: {str(e)}")
+
+        def rename_section():
+            """تغيير اسم الفصل المحدد"""
+            selected_indices = sections_listbox.curselection()
+            if not selected_indices:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار فصل أولاً")
+                return
+
+            selected_course = course_var.get().strip()
+            old_section_name = sections_listbox.get(selected_indices[0])
+
+            new_section_name = simpledialog.askstring("تغيير اسم الفصل", "أدخل الاسم الجديد للفصل:",
+                                                      initialvalue=old_section_name)
+
+            if not new_section_name or new_section_name == old_section_name:
+                return
+
+            # التحقق من وجود الفصل الجديد
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM course_sections
+                WHERE course_name=? AND section_name=?
+            """, (selected_course, new_section_name))
+
+            if cursor.fetchone()[0] > 0:
+                messagebox.showwarning("تنبيه", f"الفصل '{new_section_name}' موجود بالفعل في هذه الدورة")
+                return
+
+            # تحديث اسم الفصل
+            try:
+                with self.conn:
+                    # تحديث في جدول الفصول
+                    self.conn.execute("""
+                        UPDATE course_sections
+                        SET section_name=?
+                        WHERE course_name=? AND section_name=?
+                    """, (new_section_name, selected_course, old_section_name))
+
+                    # تحديث في جدول المتدربين
+                    self.conn.execute("""
+                        UPDATE student_sections
+                        SET section_name=?
+                        WHERE course_name=? AND section_name=?
+                    """, (new_section_name, selected_course, old_section_name))
+
+                messagebox.showinfo("نجاح", f"تم تغيير اسم الفصل إلى '{new_section_name}' بنجاح")
+                update_sections_list()
+            except Exception as e:
+                messagebox.showerror("خطأ", f"حدث خطأ أثناء تغيير اسم الفصل: {str(e)}")
+
+        def manage_section_students():
+            """إدارة متدربين الفصل المحدد"""
+            selected_indices = sections_listbox.curselection()
+            if not selected_indices:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار فصل أولاً")
+                return
+
+            selected_course = course_var.get().strip()
+            selected_section = sections_listbox.get(selected_indices[0])
+
+            # فتح نافذة إدارة متدربين الفصل
+            self.open_section_students_window(selected_course, selected_section)
+
+        def export_section_attendance_sheet():
+            """تصدير كشف حضور للفصل المحدد"""
+            selected_indices = sections_listbox.curselection()
+            if not selected_indices:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار فصل أولاً")
+                return
+
+            selected_course = course_var.get().strip()
+            selected_section = sections_listbox.get(selected_indices[0])
+
+            # تنفيذ وظيفة تصدير كشف الحضور للفصل
+            self.export_section_to_word(selected_course, selected_section)
+
+        def export_section_diligence():
+            """تصدير كشف المواظبة والسلوك للفصل المحدد"""
+            selected_indices = sections_listbox.curselection()
+            if not selected_indices:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار فصل أولاً")
+                return
+
+            selected_course = course_var.get().strip()
+            selected_section = sections_listbox.get(selected_indices[0])
+
+            # تنفيذ وظيفة تصدير كشف المواظبة والسلوك للفصل
+            self.export_section_diligence_behavior(selected_course, selected_section)
+
+        # وظيفة حذف الفصل مع ترحيل المتدربين
+        def delete_section_with_transfer():
+            """حذف الفصل مع ترحيل المتدربين إلى فصل آخر"""
+            selected_indices = sections_listbox.curselection()
+            if not selected_indices:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار فصل للحذف")
+                return
+
+            selected_course = course_var.get().strip()
+            selected_section = sections_listbox.get(selected_indices[0])
+
+            # الحصول على عدد المتدربين في الفصل المحدد
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM student_sections
+                WHERE course_name=? AND section_name=?
+            """, (selected_course, selected_section))
+
+            students_count = cursor.fetchone()[0]
+
+            # التحقق من وجود فصول أخرى
+            cursor.execute("""
+                SELECT section_name
+                FROM course_sections
+                WHERE course_name=? AND section_name!=?
+            """, (selected_course, selected_section))
+
+            other_sections = [row[0] for row in cursor.fetchall()]
+
+            if not other_sections:
+                messagebox.showwarning("تنبيه",
+                                       f"لا يوجد فصول أخرى في الدورة '{selected_course}' لترحيل المتدربين إليها.\n\nيجب أن يتوفر فصل واحد على الأقل لنقل المتدربين إليه.")
+                return
+
+            # إذا كان هناك متدربين في الفصل، اطلب تحديد فصل للترحيل
+            if students_count > 0:
+                # عرض نافذة لاختيار الفصل المراد الترحيل إليه
+                transfer_window = tk.Toplevel(multi_window)
+                transfer_window.title("ترحيل المتدربين")
+                transfer_window.geometry("400x300")
+                transfer_window.configure(bg=self.colors["light"])
+                transfer_window.transient(multi_window)
+                transfer_window.grab_set()
+
+                # توسيط النافذة
+                x = (transfer_window.winfo_screenwidth() - 400) // 2
+                y = (transfer_window.winfo_screenheight() - 300) // 2
+                transfer_window.geometry(f"400x300+{x}+{y}")
+
+                tk.Label(
+                    transfer_window,
+                    text=f"ترحيل متدربين الفصل: {selected_section}",
+                    font=self.fonts["title"],
+                    bg=self.colors["primary"],
+                    fg="white",
+                    padx=10, pady=10
+                ).pack(fill=tk.X)
+
+                tk.Label(
+                    transfer_window,
+                    text=f"يوجد {students_count} متدرب في هذا الفصل.\nاختر الفصل المراد ترحيل المتدربين إليه:",
+                    font=self.fonts["text"],
+                    bg=self.colors["light"],
+                    pady=10
+                ).pack()
+
+                # قائمة الفصول المتاحة للترحيل
+                target_var = tk.StringVar()
+                target_listbox = tk.Listbox(
+                    transfer_window,
+                    font=self.fonts["text"],
+                    selectbackground=self.colors["primary"],
+                    selectforeground="white",
+                    height=8
+                )
+                target_listbox.pack(fill=tk.X, padx=20, pady=10)
+
+                # إضافة أسماء الفصول إلى القائمة
+                for section in other_sections:
+                    target_listbox.insert(tk.END, section)
+
+                # إذا كان هناك فصل واحد فقط، حدده تلقائيًا
+                if len(other_sections) == 1:
+                    target_listbox.select_set(0)
+
+                button_frame = tk.Frame(transfer_window, bg=self.colors["light"], pady=10)
+                button_frame.pack(fill=tk.X, padx=20)
+
+                def execute_transfer():
+                    """تنفيذ عملية الترحيل وحذف الفصل"""
+                    selected_indices = target_listbox.curselection()
+                    if not selected_indices:
+                        messagebox.showwarning("تنبيه", "الرجاء اختيار فصل للترحيل إليه")
+                        return
+
+                    target_section = target_listbox.get(selected_indices[0])
+
+                    try:
+                        with self.conn:
+                            # ترحيل المتدربين إلى الفصل المحدد
+                            self.conn.execute("""
+                                UPDATE student_sections
+                                SET section_name=?
+                                WHERE course_name=? AND section_name=?
+                            """, (target_section, selected_course, selected_section))
+
+                            # حذف الفصل
+                            self.conn.execute("""
+                                DELETE FROM course_sections
+                                WHERE course_name=? AND section_name=?
+                            """, (selected_course, selected_section))
+
+                        messagebox.showinfo("نجاح",
+                                            f"تم ترحيل {students_count} متدرب من الفصل '{selected_section}' إلى الفصل '{target_section}' وحذف الفصل بنجاح")
+                        transfer_window.destroy()
+                        update_sections_list()
+
+                        # تحديث الإحصائيات بعد عملية الترحيل
+                        self.update_statistics()
+                        self.update_students_tree()
+                        self.update_attendance_display()
+
+                    except Exception as e:
+                        messagebox.showerror("خطأ", f"حدث خطأ أثناء الترحيل: {str(e)}")
+
+                transfer_btn = tk.Button(
+                    button_frame,
+                    text="ترحيل وحذف",
+                    font=self.fonts["text_bold"],
+                    bg=self.colors["warning"],
+                    fg="white",
+                    padx=15, pady=5,
+                    bd=0, relief=tk.FLAT,
+                    cursor="hand2",
+                    command=execute_transfer
+                )
+                transfer_btn.pack(side=tk.LEFT)
+
+                cancel_btn = tk.Button(
+                    button_frame,
+                    text="إلغاء",
+                    font=self.fonts["text_bold"],
+                    bg=self.colors["danger"],
+                    fg="white",
+                    padx=15, pady=5,
+                    bd=0, relief=tk.FLAT,
+                    cursor="hand2",
+                    command=transfer_window.destroy
+                )
+                cancel_btn.pack(side=tk.RIGHT)
+
+            else:
+                # إذا لم يكن هناك متدربين، يمكن حذف الفصل مباشرة
+                if messagebox.askyesno("تأكيد", f"هل أنت متأكد من حذف الفصل '{selected_section}'؟"):
+                    try:
+                        with self.conn:
+                            self.conn.execute("""
+                                DELETE FROM course_sections
+                                WHERE course_name=? AND section_name=?
+                            """, (selected_course, selected_section))
+
+                        messagebox.showinfo("نجاح", f"تم حذف الفصل '{selected_section}' بنجاح")
+                        update_sections_list()
+
+                        # تحديث الإحصائيات بعد حذف الفصل
+                        self.update_statistics()
+                        self.update_students_tree()
+                        self.update_attendance_display()
+
+                    except Exception as e:
+                        messagebox.showerror("خطأ", f"حدث خطأ أثناء حذف الفصل: {str(e)}")
+
+        # وظيفة حذف الدورة كاملة (للمشرفين فقط)
+        def delete_entire_course():
+            """حذف الدورة كاملة مع جميع الفصول والمتدربين"""
+            if not self.current_user["permissions"]["is_admin"]:
+                messagebox.showwarning("تنبيه", "هذه الوظيفة متاحة للمشرفين فقط")
+                return
+
+            selected_course = course_var.get().strip()
+            if not selected_course:
+                messagebox.showwarning("تنبيه", "الرجاء اختيار دورة للحذف")
+                return
+
+            # التأكيد قبل الحذف
+            confirmation = messagebox.askquestion(
+                "تحذير - حذف دورة كاملة",
+                f"تحذير! أنت على وشك حذف الدورة '{selected_course}' بالكامل.\n\n"
+                "سيؤدي هذا إلى:\n"
+                "• حذف جميع الفصول في الدورة\n"
+                "• حذف جميع المتدربين المرتبطين بالدورة\n"
+                "• حذف جميع سجلات الحضور المرتبطة بالدورة\n\n"
+                "هذا الإجراء لا يمكن التراجع عنه.\n\n"
+                "هل أنت متأكد من رغبتك في حذف الدورة بالكامل؟",
+                icon="warning",
+                type="yesnocancel"
+            )
+
+            if confirmation != "yes":
+                return
+
+            # طلب كلمة مرور المشرف للتأكيد
+            admin_password = simpledialog.askstring(
+                "تأكيد حذف الدورة",
+                "أدخل كلمة مرور المشرف للتأكيد:",
+                show="*"
+            )
+
+            if not admin_password:
+                return
+
+            # التحقق من كلمة المرور
+            hashed_password = hashlib.sha256(admin_password.encode()).hexdigest()
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT password FROM users WHERE username=?", ("admin",))
+            result = cursor.fetchone()
+
+            if not result or result[0] != hashed_password:
+                messagebox.showwarning("تنبيه", "كلمة المرور غير صحيحة")
+                return
+
+            # بدء عملية الحذف
+            try:
+                # إظهار نافذة تقدم العملية
+                progress_window = tk.Toplevel(multi_window)
+                progress_window.title("جاري حذف الدورة")
+                progress_window.geometry("400x150")
+                progress_window.configure(bg=self.colors["light"])
+                progress_window.transient(multi_window)
+                progress_window.grab_set()
+
+                # توسيط النافذة
+                x = (progress_window.winfo_screenwidth() - 400) // 2
+                y = (progress_window.winfo_screenheight() - 150) // 2
+                progress_window.geometry(f"400x150+{x}+{y}")
+
+                tk.Label(
+                    progress_window,
+                    text=f"جاري حذف الدورة '{selected_course}'...",
+                    font=self.fonts["text_bold"],
+                    bg=self.colors["light"],
+                    pady=10
+                ).pack()
+
+                progress_var = tk.DoubleVar()
+                progress_bar = ttk.Progressbar(
+                    progress_window,
+                    variable=progress_var,
+                    maximum=100,
+                    length=350
+                )
+                progress_bar.pack(pady=10)
+
+                status_label = tk.Label(
+                    progress_window,
+                    text="جاري تحضير العملية...",
+                    font=self.fonts["text"],
+                    bg=self.colors["light"]
+                )
+                status_label.pack(pady=5)
+
+                progress_window.update()
+
+                # الحصول على جميع أرقام هويات المتدربين في الدورة
+                cursor.execute("""
+                    SELECT national_id 
+                    FROM trainees 
+                    WHERE course=?
+                """, (selected_course,))
+                student_ids = [row[0] for row in cursor.fetchall()]
+
+                total_steps = 3
+                current_step = 0
+
+                # 1. حذف سجلات الحضور
+                progress_var.set((current_step / total_steps) * 100)
+                status_label.config(text="جاري حذف سجلات الحضور...")
+                progress_window.update()
+
+                with self.conn:
+                    for student_id in student_ids:
+                        self.conn.execute("""
+                            DELETE FROM attendance 
+                            WHERE national_id=?
+                        """, (student_id,))
+
+                current_step += 1
+                progress_var.set((current_step / total_steps) * 100)
+                status_label.config(text="جاري حذف سجلات الفصول...")
+                progress_window.update()
+
+                # 2. حذف سجلات الفصول
+                with self.conn:
+                    self.conn.execute("""
+                        DELETE FROM student_sections 
+                        WHERE course_name=?
+                    """, (selected_course,))
+
+                    self.conn.execute("""
+                        DELETE FROM course_sections 
+                        WHERE course_name=?
+                    """, (selected_course,))
+
+                current_step += 1
+                progress_var.set((current_step / total_steps) * 100)
+                status_label.config(text="جاري حذف بيانات المتدربين...")
+                progress_window.update()
+
+                # 3. حذف المتدربين
+                with self.conn:
+                    self.conn.execute("""
+                        DELETE FROM trainees 
+                        WHERE course=?
+                    """, (selected_course,))
+
+                current_step += 1
+                progress_var.set(100)
+                status_label.config(text="تم حذف الدورة بنجاح!")
+                progress_window.update()
+
+                # تحديث الإحصائيات بعد الحذف
+                self.update_statistics()
+                self.update_students_tree()
+                self.update_attendance_display()
+
+                # إغلاق نافذة التقدم بعد ثلاث ثوان
+                progress_window.after(3000, progress_window.destroy)
+
+                messagebox.showinfo("نجاح", f"تم حذف الدورة '{selected_course}' بنجاح مع جميع البيانات المرتبطة بها")
+
+                # تحديث القائمة
+                cursor.execute("SELECT DISTINCT course_name FROM course_sections")
+                updated_courses = [row[0] for row in cursor.fetchall()]
+                course_dropdown['values'] = updated_courses
+
+                # مسح القيمة الحالية إذا تم حذفها
+                if selected_course not in updated_courses:
+                    course_var.set("")
+
+                # تحديث قائمة الفصول
+                sections_listbox.delete(0, tk.END)
+                section_title_var.set("اختر فصلاً لعرض تفاصيله")
+                students_count_var.set("")
+
+            except Exception as e:
+                messagebox.showerror("خطأ", f"حدث خطأ أثناء حذف الدورة: {str(e)}")
+                try:
+                    progress_window.destroy()
+                except:
+                    pass
+
+        # ربط وظيفة اختيار الفصل
+        sections_listbox.bind("<<ListboxSelect>>", on_section_select)
+
+        # ربط وظيفة تحديث القائمة بتغيير الدورة
+        course_dropdown.bind("<<ComboboxSelected>>", lambda e: update_sections_list())
+
+    def open_section_students_window(self, course_name, section_name):
+        """فتح نافذة إدارة متدربين الفصل"""
+        students_window = tk.Toplevel(self.root)
+        students_window.title(f"إدارة متدربين فصل {section_name} - {course_name}")
+        students_window.geometry("900x600")
+        students_window.configure(bg=self.colors["light"])
+        students_window.grab_set()
+        students_window.resizable(True, True)
+
+        # توسيط النافذة
+        x = (students_window.winfo_screenwidth() - 900) // 2
+        y = (students_window.winfo_screenheight() - 600) // 2
+        students_window.geometry(f"900x600+{x}+{y}")
+
+        # عنوان النافذة
+        tk.Label(
+            students_window,
+            text=f"إدارة متدربين فصل: {section_name} - دورة: {course_name}",
+            font=self.fonts["title"],
+            bg=self.colors["primary"],
+            fg="white",
+            padx=10, pady=10
+        ).pack(fill=tk.X)
+
+        # إطار البحث
+        search_frame = tk.Frame(students_window, bg=self.colors["light"], padx=10, pady=10)
+        search_frame.pack(fill=tk.X)
+
+        tk.Label(
+            search_frame,
+            text="البحث عن متدرب:",
+            font=self.fonts["text_bold"],
+            bg=self.colors["light"]
+        ).pack(side=tk.RIGHT, padx=5)
+
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(
+            search_frame,
+            textvariable=search_var,
+            font=self.fonts["text"],
+            width=25
+        )
+        search_entry.pack(side=tk.RIGHT, padx=5)
+
+        search_btn = tk.Button(
+            search_frame,
+            text="بحث",
+            font=self.fonts["text_bold"],
+            bg=self.colors["secondary"],
+            fg="white",
+            padx=10, pady=2,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: search_students()
+        )
+        search_btn.pack(side=tk.RIGHT, padx=5)
+
+        # إطار القوائم المزدوجة
+        lists_frame = tk.Frame(students_window, bg=self.colors["light"])
+        lists_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # قائمة المتدربين في الفصل
+        section_frame = tk.LabelFrame(
+            lists_frame,
+            text=f"متدربين فصل {section_name}",
+            font=self.fonts["text_bold"],
+            bg=self.colors["light"],
+            fg=self.colors["dark"],
+            padx=5, pady=5
+        )
+        section_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        section_scroll = tk.Scrollbar(section_frame)
+        section_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        section_students = tk.Listbox(
+            section_frame,
+            font=self.fonts["text"],
+            selectbackground=self.colors["primary"],
+            selectforeground="white",
+            yscrollcommand=section_scroll.set
+        )
+        section_students.pack(fill=tk.BOTH, expand=True, pady=5)
+        section_scroll.config(command=section_students.yview)
+
+        # القائمة الوسطى للأزرار
+        middle_frame = tk.Frame(lists_frame, bg=self.colors["light"], width=100)
+        middle_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
+
+        move_to_other_btn = tk.Button(
+            middle_frame,
+            text=">>",
+            font=self.fonts["text_bold"],
+            bg=self.colors["primary"],
+            fg="white",
+            padx=5, pady=2,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: move_to_other_section()
+        )
+        move_to_other_btn.pack(pady=5)
+
+        move_to_current_btn = tk.Button(
+            middle_frame,
+            text="<<",
+            font=self.fonts["text_bold"],
+            bg=self.colors["success"],
+            fg="white",
+            padx=5, pady=2,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: move_to_current_section()
+        )
+        move_to_current_btn.pack(pady=5)
+
+        # قائمة المتدربين في الدورة بدون فصل أو في فصول أخرى
+        other_frame = tk.LabelFrame(
+            lists_frame,
+            text="متدربين الدورة الآخرين",
+            font=self.fonts["text_bold"],
+            bg=self.colors["light"],
+            fg=self.colors["dark"],
+            padx=5, pady=5
+        )
+        other_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        other_scroll = tk.Scrollbar(other_frame)
+        other_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        other_students = tk.Listbox(
+            other_frame,
+            font=self.fonts["text"],
+            selectbackground=self.colors["warning"],
+            selectforeground="white",
+            yscrollcommand=other_scroll.set
+        )
+        other_students.pack(fill=tk.BOTH, expand=True, pady=5)
+        other_scroll.config(command=other_students.yview)
+
+        # إطار المعلومات
+        info_frame = tk.Frame(students_window, bg=self.colors["light"], padx=10, pady=5)
+        info_frame.pack(fill=tk.X)
+
+        section_count_var = tk.StringVar(value="عدد متدربين الفصل: 0")
+        other_count_var = tk.StringVar(value="عدد المتدربين الآخرين: 0")
+
+        section_count_label = tk.Label(
+            info_frame,
+            textvariable=section_count_var,
+            font=self.fonts["text"],
+            bg=self.colors["light"]
+        )
+        section_count_label.pack(side=tk.RIGHT, padx=10)
+
+        other_count_label = tk.Label(
+            info_frame,
+            textvariable=other_count_var,
+            font=self.fonts["text"],
+            bg=self.colors["light"]
+        )
+        other_count_label.pack(side=tk.LEFT, padx=10)
+
+        # إطار الأزرار السفلي
+        button_frame = tk.Frame(students_window, bg=self.colors["light"], pady=10)
+        button_frame.pack(fill=tk.X, padx=10)
+
+        save_btn = tk.Button(
+            button_frame,
+            text="حفظ التغييرات",
+            font=self.fonts["text_bold"],
+            bg=self.colors["success"],
+            fg="white",
+            padx=15, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=lambda: save_changes()
+        )
+        save_btn.pack(side=tk.LEFT, padx=5)
+
+        close_btn = tk.Button(
+            button_frame,
+            text="إغلاق",
+            font=self.fonts["text_bold"],
+            bg=self.colors["dark"],
+            fg="white",
+            padx=15, pady=5,
+            bd=0, relief=tk.FLAT,
+            cursor="hand2",
+            command=students_window.destroy
+        )
+        close_btn.pack(side=tk.RIGHT, padx=5)
+
+        # حفظ التغييرات المؤقتة
+        # القواميس تخزن: {الهوية: الاسم}
+        current_section_students = {}  # المتدربين في الفصل الحالي
+        other_section_students = {}  # المتدربين الآخرين
+        modified = False  # هل تم تعديل البيانات
+
+        # الوظائف المساعدة
+        def load_students():
+            """تحميل بيانات المتدربين"""
+            nonlocal current_section_students, other_section_students
+
+            # مسح القوائم
+            section_students.delete(0, tk.END)
+            other_students.delete(0, tk.END)
+            current_section_students.clear()
+            other_section_students.clear()
+
+            cursor = self.conn.cursor()
+
+            # 1. الحصول على متدربين الفصل الحالي
+            cursor.execute("""
+                SELECT t.national_id, t.name
+                FROM trainees t
+                JOIN student_sections s ON t.national_id = s.national_id
+                WHERE t.course=? AND s.section_name=? AND t.is_excluded=0
+                ORDER BY t.name
+            """, (course_name, section_name))
+
+            for row in cursor.fetchall():
+                student_id, student_name = row
+                display_text = f"{student_name} ({student_id})"
+                section_students.insert(tk.END, display_text)
+                current_section_students[student_id] = student_name
+
+            # 2. الحصول على باقي متدربين الدورة (غير مسجلين في فصول أو في فصول أخرى)
+            cursor.execute("""
+                SELECT t.national_id, t.name, 
+                       (SELECT section_name FROM student_sections 
+                        WHERE national_id=t.national_id AND course_name=t.course) as section
+                FROM trainees t
+                WHERE t.course=? AND t.is_excluded=0
+                ORDER BY t.name
+            """, (course_name,))
+
+            for row in cursor.fetchall():
+                student_id, student_name, student_section = row
+
+                # تخطي المتدربين في الفصل الحالي
+                if student_section == section_name:
+                    continue
+
+                # إضافة المتدربين الآخرين
+                display_text = f"{student_name} ({student_id})"
+                if student_section:
+                    display_text += f" - فصل: {student_section}"
+                else:
+                    display_text += " - بدون فصل"
+
+                other_students.insert(tk.END, display_text)
+                other_section_students[student_id] = student_name
+
+            # تحديث العدادات
+            section_count_var.set(f"عدد متدربين الفصل: {len(current_section_students)}")
+            other_count_var.set(f"عدد المتدربين الآخرين: {len(other_section_students)}")
+
+        def search_students():
+            """البحث عن متدربين"""
+            search_text = search_var.get().strip()
+            if not search_text:
+                load_students()
+                return
+
+            # مسح القوائم
+            section_students.delete(0, tk.END)
+            other_students.delete(0, tk.END)
+
+            # البحث في قائمة متدربين الفصل الحالي
+            for student_id, student_name in current_section_students.items():
+                if (search_text.lower() in student_name.lower() or
+                        search_text in student_id):
+                    display_text = f"{student_name} ({student_id})"
+                    section_students.insert(tk.END, display_text)
+
+            # البحث في قائمة المتدربين الآخرين
+            for student_id, student_name in other_section_students.items():
+                if (search_text.lower() in student_name.lower() or
+                        search_text in student_id):
+                    display_text = f"{student_name} ({student_id})"
+
+                    # التحقق من وجود معلومات الفصل
+                    cursor = self.conn.cursor()
+                    cursor.execute("""
+                        SELECT section_name FROM student_sections
+                        WHERE national_id=? AND course_name=?
+                    """, (student_id, course_name))
+
+                    result = cursor.fetchone()
+
+                    if result and result[0]:
+                        display_text += f" - فصل: {result[0]}"
+                    else:
+                        display_text += " - بدون فصل"
+
+                    other_students.insert(tk.END, display_text)
+
+        def move_to_other_section():
+            """نقل المتدربين المحددين من الفصل الحالي إلى قائمة المتدربين الآخرين"""
+            nonlocal modified
+
+            selected_indices = section_students.curselection()
+            if not selected_indices:
+                return
+
+            for index in reversed(selected_indices):
+                student_text = section_students.get(index)
+                student_id = extract_id_from_text(student_text)
+
+                if student_id in current_section_students:
+                    student_name = current_section_students[student_id]
+
+                    # نقل المتدرب إلى القائمة الأخرى
+                    other_students.insert(tk.END, f"{student_name} ({student_id}) - بدون فصل")
+                    other_section_students[student_id] = student_name
+
+                    # حذف المتدرب من القائمة الحالية
+                    del current_section_students[student_id]
+                    section_students.delete(index)
+
+                    modified = True
+
+            # تحديث العدادات
+            section_count_var.set(f"عدد متدربين الفصل: {len(current_section_students)}")
+            other_count_var.set(f"عدد المتدربين الآخرين: {len(other_section_students)}")
+
+        def move_to_current_section():
+            """نقل المتدربين المحددين من قائمة المتدربين الآخرين إلى الفصل الحالي"""
+            nonlocal modified
+
+            selected_indices = other_students.curselection()
+            if not selected_indices:
+                return
+
+            for index in reversed(selected_indices):
+                student_text = other_students.get(index)
+                student_id = extract_id_from_text(student_text)
+
+                if student_id in other_section_students:
+                    student_name = other_section_students[student_id]
+
+                    # نقل المتدرب إلى الفصل الحالي
+                    section_students.insert(tk.END, f"{student_name} ({student_id})")
+                    current_section_students[student_id] = student_name
+
+                    # حذف المتدرب من القائمة الأخرى
+                    del other_section_students[student_id]
+                    other_students.delete(index)
+
+                    modified = True
+
+            # تحديث العدادات
+            section_count_var.set(f"عدد متدربين الفصل: {len(current_section_students)}")
+            other_count_var.set(f"عدد المتدربين الآخرين: {len(other_section_students)}")
+
+        def extract_id_from_text(text):
+            """استخراج رقم الهوية من النص المعروض"""
+            # النص بشكل: "اسم المتدرب (رقم الهوية) - معلومات إضافية"
+            try:
+                start = text.find("(") + 1
+                end = text.find(")")
+                if start > 0 and end > start:
+                    return text[start:end]
+            except:
+                pass
+            return ""
+
+        def save_changes():
+            """حفظ التغييرات في قاعدة البيانات"""
+            nonlocal modified
+
+            if not modified:
+                messagebox.showinfo("معلومات", "لم يتم إجراء أي تغييرات")
+                return
+
+            # تحديث بيانات المتدربين في قاعدة البيانات
+            current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            try:
+                cursor = self.conn.cursor()
+                with self.conn:
+                    # 1. حذف كل المتدربين من الفصل الحالي
+                    self.conn.execute("""
+                        DELETE FROM student_sections
+                        WHERE course_name=? AND section_name=?
+                    """, (course_name, section_name))
+
+                    # 2. إضافة المتدربين الحاليين في الفصل
+                    for student_id in current_section_students:
+                        self.conn.execute("""
+                            INSERT OR REPLACE INTO student_sections
+                            (national_id, course_name, section_name, assigned_date)
+                            VALUES (?, ?, ?, ?)
+                        """, (student_id, course_name, section_name, current_date))
+
+                messagebox.showinfo("نجاح", "تم حفظ التغييرات بنجاح")
+                modified = False
+            except Exception as e:
+                messagebox.showerror("خطأ", f"حدث خطأ أثناء حفظ التغييرات: {str(e)}")
+
+        # تحميل بيانات المتدربين عند فتح النافذة
+        load_students()
+
+    def export_section_to_word(self, course_name, section_name):
+        """تصدير كشف حضور للفصل المحدد"""
+        if not self.current_user["permissions"]["can_export_data"]:
+            messagebox.showwarning("تنبيه", "ليس لديك صلاحية تصدير البيانات")
+            return
+
+        try:
+            # التأكد من وجود مكتبة python-docx
+            if 'Document' not in globals():
+                messagebox.showerror("خطأ",
+                                     "لم يتم العثور على مكتبة python-docx. قم بتثبيتها باستخدام: pip install python-docx")
+                return
+
+            # الحصول على بيانات المتدربين في الفصل المحدد (فقط غير المستبعدين)
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT t.national_id, t.name, t.rank
+                FROM trainees t
+                JOIN student_sections s ON t.national_id = s.national_id
+                WHERE t.course=? AND s.section_name=? AND t.is_excluded=0
+                ORDER BY t.name
+            """, (course_name, section_name))
+            students_data = cursor.fetchall()
+
+            if not students_data:
+                messagebox.showinfo("ملاحظة",
+                                    f"لا يوجد متدربين نشطين مسجلين في فصل '{section_name}' من دورة '{course_name}'")
+                return
+
+            # إنشاء مستند جديد
+            doc = Document()
+
+            # إعداد المستند للغة العربية (RTL) بتنسيق عمودي
+            section = doc.sections[0]
+            section.page_width = Inches(8.27)  # A4 width in portrait
+            section.page_height = Inches(11.69)  # A4 height in portrait
+            section.left_margin = Inches(0.5)
+            section.right_margin = Inches(0.5)
+            section.top_margin = Inches(0.7)
+            section.bottom_margin = Inches(0.7)
+
+            # إعداد الرأس (Header) مع خط فاصل
+            header = section.header
+            header_para = header.paragraphs[0]
+            header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            header_run = header_para.add_run(f'كشف حضور وغياب متدربين فصل: {section_name} - دورة: {course_name}')
+            header_run.font.size = Pt(14)
+            header_run.font.bold = True
+            header_run.font.rtl = True
+
+            # إضافة إجمالي عدد المتدربين في الرأس
+            header_para = header.add_paragraph()
+            header_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            student_count_run = header_para.add_run(f'إجمالي عدد المتدربين: {len(students_data)}')
+            student_count_run.font.size = Pt(12)
+            student_count_run.font.bold = True
+            student_count_run.font.rtl = True
+
+            # إضافة خط أفقي بعد معلومات الدورة في الرأس
+            header_para.paragraph_format.border_bottom = True
+
+            # إضافة تاريخ الطباعة في الرأس
+            today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            header_para = header.add_paragraph()
+            header_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            header_date = header_para.add_run(f'تاريخ الطباعة: {today_date}')
+            header_date.font.size = Pt(9)
+            header_date.font.rtl = True
+
+            # إعداد التذييل بشكل بسيط
+            footer = section.footer
+            footer_para = footer.paragraphs[0]
+            footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            footer_text = footer_para.add_run('نظام إدارة الحضور والغياب - قسم شؤون المدربين')
+            footer_text.font.size = Pt(9)
+            footer_text.font.rtl = True
+
+            # إضافة فقرة فاصلة قبل الجدول
+            doc.add_paragraph()
+
+            # إنشاء جدول للحضور والغياب
+            table = doc.add_table(rows=1, cols=8)
+            table.style = 'Table Grid'
+
+            # تعريف رأس الجدول
+            hdr_cells = table.rows[0].cells
+            headers = ["العدد", "الاسم", "رقم الهوية", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس"]
+
+            # إضافة العناوين من اليمين إلى اليسار (عكس الترتيب)
+            for i, header in enumerate(reversed(headers)):
+                hdr_cells[i].text = header
+                # تنسيق العناوين
+                hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in hdr_cells[i].paragraphs[0].runs:
+                    run.font.bold = True
+                    run.font.size = Pt(11)
+                    run.font.rtl = True
+
+                # تطبيق تظليل لرأس الجدول بطريقة بسيطة
+                try:
+                    shading_elm = parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls('w')))
+                    hdr_cells[i]._element.get_or_add_tcPr().append(shading_elm)
+                except:
+                    # في حالة حدوث خطأ، نتجاهل التظليل
+                    pass
+
+            # إضافة بيانات المتدربين
+            for i, student in enumerate(students_data):
+                national_id, name, rank = student
+                row_cells = table.add_row().cells
+
+                # إضافة البيانات من اليمين إلى اليسار (عكس الترتيب)
+                # العدد (تسلسلي)
+                row_cells[7].text = str(i + 1)
+                row_cells[7].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                # الاسم - تغيير المحاذاة إلى توسيط
+                row_cells[6].text = name
+                row_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                # رقم الهوية
+                row_cells[5].text = national_id
+                row_cells[5].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                # الأيام تبقى فارغة للتعبئة يدوياً
+                for day_idx in range(5):
+                    row_cells[day_idx].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                # تنسيق النص في الصف
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.rtl = True
+                            run.font.size = Pt(10)
+
+            # ضبط أبعاد الجدول لتناسب التنسيق العمودي - زيادة عرض عمود الاسم
+            table.autofit = False
+            col_widths = [0.5, 2.6, 1.4, 0.7, 0.7, 0.7, 0.7, 0.7]  # زيادة عرض عمود الاسم (2.6 بدلاً من 2.0)
+
+            # تطبيق العرض المحدد لكل عمود
+            try:
+                for i, width in enumerate(col_widths):
+                    table.columns[i].width = Inches(width)
+            except:
+                # في حالة حدوث خطأ، نتجاهل تعديل العرض
+                pass
+
+            # إضافة مساحة بعد الجدول
+            doc.add_paragraph()
+
+            # إضافة جدول للتوقيعات
+            sig_table = doc.add_table(rows=1, cols=3)
+            sig_table.style = 'Table Grid'
+            sig_cells = sig_table.rows[0].cells
+
+            sig_cells[2].text = "المسؤول: _________________"
+            sig_cells[1].text = "رئيس القسم: ______________"
+            sig_cells[0].text = "المدير: __________________"
+
+            for cell in sig_cells:
+                cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in cell.paragraphs[0].runs:
+                    run.font.rtl = True
+                    run.font.size = Pt(11)
+
+            # إضافة ملاحظات في نهاية المستند
+            doc.add_paragraph()
+            notes_para = doc.add_paragraph()
+            notes_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            notes_para.add_run("ملاحظات:").bold = True
+
+            # إضافة خطوط للملاحظات
+            for _ in range(3):
+                line_para = doc.add_paragraph("_" * 80)
+                line_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+            # حفظ المستند
+            export_file = filedialog.asksaveasfilename(
+                defaultextension=".docx",
+                filetypes=[("Word documents", "*.docx")],
+                initialfile=f"كشف_حضور_{section_name}_{course_name}.docx"
+            )
+
+            if export_file:
+                doc.save(export_file)
+                messagebox.showinfo("نجاح", f"تم تصدير كشف الحضور لفصل '{section_name}' بنجاح إلى:\n{export_file}")
+                # فتح الملف مباشرة بعد التصدير
+                try:
+                    os.startfile(export_file)
+                except:
+                    # في حالة عدم تمكن النظام من فتح الملف، تجاهل الخطأ
+                    pass
+
+        except Exception as e:
+            messagebox.showerror("خطأ", f"حدث خطأ أثناء تصدير بيانات الفصل: {str(e)}")
+
+    def export_section_diligence_behavior(self, course_name, section_name):
+        """وظيفة تصدير بيان المواظبة والسلوك للفصل المحدد بتنسيق Word مع ترتيب المتدربين حسب الدرجة"""
+        if not self.current_user["permissions"]["can_export_data"]:
+            messagebox.showwarning("تنبيه", "ليس لديك صلاحية تصدير البيانات")
+            return
+
+        try:
+            # التأكد من وجود مكتبة python-docx
+            if 'Document' not in globals():
+                messagebox.showerror("خطأ",
+                                     "لم يتم العثور على مكتبة python-docx. قم بتثبيتها باستخدام: pip install python-docx")
+                return
+
+            # الحصول على بيانات المتدربين في الفصل المحدد (فقط غير المستبعدين)
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT t.national_id, t.name, t.rank
+                FROM trainees t
+                JOIN student_sections s ON t.national_id = s.national_id
+                WHERE t.course=? AND s.section_name=? AND t.is_excluded=0
+                ORDER BY t.name
+            """, (course_name, section_name))
+            students_data = cursor.fetchall()
+
+            if not students_data:
+                messagebox.showinfo("ملاحظة",
+                                    f"لا يوجد متدربين نشطين مسجلين في فصل '{section_name}' من دورة '{course_name}'")
+                return
+
+            # إنشاء نافذة حالة لإظهار تقدم التصدير
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("جاري حساب المواظبة والسلوك")
+            progress_window.geometry("400x150")
+            progress_window.configure(bg=self.colors["light"])
+            progress_window.transient(self.root)
+            progress_window.resizable(False, False)
+            progress_window.grab_set()
+
+            x = (progress_window.winfo_screenwidth() - 400) // 2
+            y = (progress_window.winfo_screenheight() - 150) // 2
+            progress_window.geometry(f"400x150+{x}+{y}")
+
+            tk.Label(
+                progress_window,
+                text=f"جاري حساب نتائج المواظبة والسلوك لفصل: {section_name}",
+                font=self.fonts["text_bold"],
+                bg=self.colors["light"],
+                pady=10
+            ).pack()
+
+            progress_var = tk.DoubleVar()
+            progress_bar = ttk.Progressbar(
+                progress_window,
+                variable=progress_var,
+                maximum=100,
+                length=350
+            )
+            progress_bar.pack(pady=10)
+
+            status_label = tk.Label(
+                progress_window,
+                text="جاري تحليل بيانات الحضور والغياب...",
+                font=self.fonts["text"],
+                bg=self.colors["light"]
+            )
+            status_label.pack(pady=5)
+
+            progress_window.update()
+
+            # إنشاء مستند جديد
+            doc = Document()
+
+            # إعداد المستند للغة العربية (RTL)
+            section = doc.sections[0]
+            section.page_width = Inches(8.27)  # A4 width
+            section.page_height = Inches(11.69)  # A4 height
+            section.left_margin = Inches(0.7)
+            section.right_margin = Inches(0.7)
+            section.top_margin = Inches(0.7)
+            section.bottom_margin = Inches(0.7)
+
+            # إضافة عنوان المستند
+            title = doc.add_heading(f'بيان المواظبة والسلوك لمتدربين فصل: {section_name} - دورة: {course_name}', level=0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in title.runs:
+                run.font.size = Pt(16)
+                run.font.bold = True
+                run.font.rtl = True
+
+            # إضافة معلومات الطباعة والتاريخ
+            date_info = doc.add_paragraph()
+            date_info.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            date_run = date_info.add_run(f'تاريخ الطباعة: {today_date}')
+            date_run.font.size = Pt(10)
+            date_run.font.rtl = True
+
+            # إضافة خط أفقي
+            border_paragraph = doc.add_paragraph()
+            border_paragraph.paragraph_format.border_bottom = True
+
+            # إنشاء جدول للمواظبة والسلوك
+            table = doc.add_table(rows=1, cols=6)
+            table.style = 'Table Grid'
+
+            # عناوين الجدول (من اليمين إلى اليسار)
+            hdr_cells = table.rows[0].cells
+            headers = ["عدد", "الاسم", "الرتبة", "رقم الهوية", "المواظبة", "السلوك"]
+
+            for i, header in enumerate(headers):
+                # حساب الموقع المناسب للعناوين (من اليمين إلى اليسار)
+                idx = len(headers) - i - 1
+                hdr_cells[idx].text = header
+                hdr_cells[idx].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in hdr_cells[idx].paragraphs[0].runs:
+                    run.font.bold = True
+                    run.font.size = Pt(12)
+                    run.font.rtl = True
+
+                # تطبيق تظليل للرأس
+                try:
+                    shading_elm = parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls('w')))
+                    hdr_cells[idx]._element.get_or_add_tcPr().append(shading_elm)
+                except:
+                    pass
+
+            # معالجة بيانات كل متدرب وحساب درجة المواظبة
+            student_scores = []
+            total_students = len(students_data)
+
+            for index, student in enumerate(students_data):
+                national_id, name, rank = student
+
+                # تحديث شريط التقدم
+                progress_var.set((index / total_students) * 80)  # 80% للمعالجة
+                status_label.config(text=f"معالجة المتدرب {index + 1} من {total_students}: {name}")
+                progress_window.update()
+
+                # حساب درجة المواظبة:
+                # 1. الدرجة الأولية هي 100
+                # 2. خصم 4 درجات لكل غياب كامل
+                # 3. خصم 1 درجة لكل تأخير
+                # 4. خصم 0.5 درجة لكل غياب بعذر
+
+                # الاستعلام عن حالات الحضور للمتدرب
+                cursor.execute("""
+                    SELECT status
+                    FROM attendance
+                    WHERE national_id=?
+                """, (national_id,))
+                attendance_records = cursor.fetchall()
+
+                diligence_score = 100.0  # البداية من 100
+
+                for record in attendance_records:
+                    status = record[0]
+                    if status == "غائب" or status == "غائب بعذر":  # تعديل: خصم 4 نقاط لـ "غائب بعذر"
+                        diligence_score -= 4.0
+                    elif status == "متأخر":
+                        diligence_score -= 1.0
+                    elif status == "حالة وفاة" or status == "منوم":  # إضافة: خصم 0.5 نقطة للحالات الجديدة
+                        diligence_score -= 0.5
+
+                # التأكد من عدم نزول الدرجة عن صفر
+                diligence_score = max(0, diligence_score)
+
+                # حفظ بيانات المتدرب مع الدرجة
+                student_scores.append((national_id, name, rank, diligence_score))
+
+            # ترتيب المتدربين تصاعدياً حسب درجة المواظبة (الأقل يأتي أولاً)
+            student_scores.sort(key=lambda x: x[3])
+
+            # إضافة بيانات المتدربين إلى الجدول بعد الترتيب
+            for index, (national_id, name, rank, diligence_score) in enumerate(student_scores):
+                # تحديث شريط التقدم
+                progress_var.set(80 + (index / total_students) * 15)  # 15% للترتيب والإضافة
+                status_label.config(text=f"إضافة المتدرب {index + 1} من {total_students} إلى التقرير")
+                progress_window.update()
+
+                # درجة السلوك دائمًا 100
+                behavior_score = 100.0
+
+                # إضافة صف جديد للمتدرب
+                row_cells = table.add_row().cells
+
+                # الترتيب من اليمين إلى اليسار
+                row_cells[5].text = str(index + 1)  # العدد التسلسلي
+                row_cells[4].text = name  # الاسم
+                row_cells[3].text = rank  # الرتبة
+                row_cells[2].text = national_id  # رقم الهوية
+                row_cells[1].text = f"{diligence_score:.1f}"  # المواظبة بدقة رقم عشري واحد
+                row_cells[0].text = f"{behavior_score:.0f}"  # السلوك (دائمًا 100)
+
+                # تنسيق الخلايا
+                for cell in row_cells:
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for run in cell.paragraphs[0].runs:
+                        run.font.rtl = True
+                        run.font.size = Pt(11)
+
+                # تلوين الصف حسب درجة المواظبة
+                if diligence_score < 90:  # إذا كانت الدرجة أقل من 90، تمييزها بلون فاتح
+                    try:
+                        for cell in row_cells:
+                            shading_elm = parse_xml(r'<w:shd {} w:fill="FFDDDD"/>'.format(nsdecls('w')))
+                            cell._element.get_or_add_tcPr().append(shading_elm)
+                    except:
+                        pass
+
+            # تنسيق الجدول
+            table.autofit = False
+            try:
+                # تعيين عرض الأعمدة (العرض بالبوصة)
+                widths = [0.8, 0.8, 1.2, 1.5, 2.5, 0.5]  # السلوك، المواظبة، الهوية، الرتبة، الاسم، العدد
+                for i, width in enumerate(widths):
+                    table.columns[i].width = Inches(width)
+            except:
+                pass
+
+            # إضافة فقرة فاصلة بعد الجدول
+            doc.add_paragraph()
+
+            # إضافة جدول للتوقيعات
+            signature_table = doc.add_table(rows=1, cols=3)
+            signature_table.style = 'Table Grid'
+
+            sig_cells = signature_table.rows[0].cells
+            sig_cells[2].text = "مسؤول الحضور: _________________"
+            sig_cells[1].text = "رئيس القسم: __________________"
+            sig_cells[0].text = "مدير التدريب: ________________"
+
+            for cell in sig_cells:
+                cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in cell.paragraphs[0].runs:
+                    run.font.rtl = True
+                    run.font.size = Pt(11)
+
+            # إضافة نص توضيحي في نهاية المستند
+            doc.add_paragraph()
+            note_para = doc.add_paragraph()
+            note_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            note_run = note_para.add_run("ملاحظات حساب المواظبة:")
+            note_run.font.bold = True
+            note_run.font.rtl = True
+
+            notes = [
+                "- تبدأ درجة المواظبة من 100 درجة.",
+                "- يتم خصم 4 درجات عن كل يوم غياب.",
+                "- يتم خصم 4 درجات عن كل غياب بعذر.",
+                "- يتم خصم 1 درجة عن كل حالة تأخير.",
+                "- يتم خصم 0.5 درجة عن كل حالة وفاة.",
+                "- يتم خصم 0.5 درجة عن كل حالة منوم.",
+                "- درجة السلوك 100 درجة للجميع."
+            ]
+
+            for note in notes:
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                p.add_run(note).font.rtl = True
+
+            # تحديث شريط التقدم
+            progress_var.set(95)
+            status_label.config(text="فتح حوار حفظ الملف...")
+            progress_window.update()
+
+            # حفظ المستند
+            export_file = filedialog.asksaveasfilename(
+                defaultextension=".docx",
+                filetypes=[("Word documents", "*.docx")],
+                initialfile=f"بيان_المواظبة_والسلوك_{section_name}_{course_name}.docx"
+            )
+
+            if export_file:
+                progress_var.set(95)
+                status_label.config(text="جاري حفظ الملف...")
+                progress_window.update()
+
+                doc.save(export_file)
+
+                progress_var.set(100)
+                status_label.config(text="تم تصدير البيان بنجاح!")
+                progress_window.update()
+
+                # إغلاق نافذة التقدم بعد ثانيتين
+                progress_window.after(2000, progress_window.destroy)
+
+                messagebox.showinfo("نجاح",
+                                    f"تم تصدير بيان المواظبة والسلوك للفصل '{section_name}' بنجاح إلى:\n{export_file}")
+
+                # محاولة فتح الملف تلقائيًا
+                try:
+                    os.startfile(export_file)
+                except:
+                    pass
+            else:
+                progress_window.destroy()
+
+        except Exception as e:
+            try:
+                progress_window.destroy()
+            except:
+                pass
+            messagebox.showerror("خطأ", f"حدث خطأ أثناء تصدير بيان المواظبة والسلوك: {str(e)}")
+
+
+    def get_arabic_day_name(self, date_str):
+        """تحويل التاريخ إلى اسم اليوم بالعربية"""
+        try:
+            # تحويل النص إلى تاريخ
+            date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+
+            # الحصول على رقم اليوم في الأسبوع (0=الاثنين، 6=الأحد)
+            day_num = date_obj.weekday()
+
+            # قائمة أيام الأسبوع بالعربية (مرتبة حسب نظام Python للأيام)
+            arabic_days = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+
+            return arabic_days[day_num]
+        except:
+            # في حال حدوث أي خطأ، نعيد نص التاريخ كما هو
+            return date_str
