@@ -2028,7 +2028,7 @@ def insert_attendance_record(self, status, excuse_reason=""):
             messagebox.showerror("خطأ", f"حدث خطأ أثناء تصدير بيانات الدورة: {str(e)}")
 
     def export_course_diligence_behavior(self, course_name):
-        """وظيفة تصدير بيان المواظبة والسلوك للدورة بتنسيق Word مع ترتيب المتدربين حسب الدرجة"""
+        """وظيفة تصدير بيان المواظبة والسلوك للدورة بتنسيق Word مع معالجة خصم الدرجات للأعذار المختلفة"""
         if not self.current_user["permissions"]["can_export_data"]:
             messagebox.showwarning("تنبيه", "ليس لديك صلاحية تصدير البيانات")
             return
@@ -2167,11 +2167,12 @@ def insert_attendance_record(self, status, excuse_reason=""):
                 # 1. الدرجة الأولية هي 100
                 # 2. خصم 4 درجات لكل غياب كامل
                 # 3. خصم 1 درجة لكل تأخير
-                # 4. خصم 0.5 درجة لكل غياب بعذر
+                # 4. خصم 4 درجات لمعظم أنواع الغياب بعذر
+                # 5. خصم 2 درجة لإجازة الأبوة وحضور المحكمة كشاهد فقط
 
                 # الاستعلام عن حالات الحضور للمتدرب
                 cursor.execute("""
-                    SELECT status
+                    SELECT status, excuse_reason
                     FROM attendance
                     WHERE national_id=?
                 """, (national_id,))
@@ -2179,17 +2180,24 @@ def insert_attendance_record(self, status, excuse_reason=""):
 
                 diligence_score = 100.0  # البداية من 100
 
-                # في الجزء الخاص بحساب درجة المواظبة:
                 for record in attendance_records:
                     status = record[0]
+                    excuse_reason = record[1] if record[1] else ""
+
                     if status == "غائب":
-                        diligence_score -= 4.0
-                    elif status == "غائب بعذر":
                         diligence_score -= 4.0
                     elif status == "متأخر":
                         diligence_score -= 1.0
-                    elif status == "حالة وفاة" or status == "منوم":  # تحديث: خصم 2 درجة بدلاً من 0.5
+                    elif status == "حالة وفاة" or status == "منوم":
                         diligence_score -= 2.0
+                    elif status == "غائب بعذر":
+                        # معالجة الغياب بعذر حسب النوع
+                        if excuse_reason in ["إجازة أبوة", "حضور للمحكمة كشاهد"]:
+                            # خصم 2 درجة فقط لهذه الحالات
+                            diligence_score -= 2.0
+                        else:
+                            # خصم 4 درجات لباقي أنواع الغياب بعذر (إجازة مرضية وأخرى)
+                            diligence_score -= 4.0
 
                 # التأكد من عدم نزول الدرجة عن صفر
                 diligence_score = max(0, diligence_score)
@@ -2273,14 +2281,15 @@ def insert_attendance_record(self, status, excuse_reason=""):
             note_run.font.bold = True
             note_run.font.rtl = True
 
-            # وفي جزء الملاحظات:
+            # تحديث الملاحظات لتشمل التفاصيل الجديدة
             notes = [
                 "- تبدأ درجة المواظبة من 100 درجة.",
                 "- يتم خصم 4 درجات عن كل يوم غياب.",
-                "- يتم خصم 4 درجات عن كل غياب بعذر.",
+                "- يتم خصم 4 درجات عن كل غياب بعذر (إجازة مرضية أو أخرى).",
+                "- يتم خصم 2 درجة فقط عن إجازة الأبوة وحضور المحكمة كشاهد.",
                 "- يتم خصم 1 درجة عن كل حالة تأخير.",
-                "- يتم خصم 2 درجة عن كل حالة وفاة.",  # تحديث من 0.5 إلى 2
-                "- يتم خصم 2 درجة عن كل حالة منوم.",  # تحديث من 0.5 إلى 2
+                "- يتم خصم 2 درجة عن كل حالة وفاة.",
+                "- يتم خصم 2 درجة عن كل حالة منوم.",
                 "- درجة السلوك 100 درجة للجميع."
             ]
 
@@ -2332,3 +2341,230 @@ def insert_attendance_record(self, status, excuse_reason=""):
             except:
                 pass
             messagebox.showerror("خطأ", f"حدث خطأ أثناء تصدير بيان المواظبة والسلوك: {str(e)}")
+
+    def export_section_diligence_behavior(self, course_name, section_name):
+        """وظيفة تصدير بيان المواظبة والسلوك للفصل المحدد بتنسيق Word مع معالجة خصم الدرجات للأعذار المختلفة"""
+        if not self.current_user["permissions"]["can_export_data"]:
+            messagebox.showwarning("تنبيه", "ليس لديك صلاحية تصدير البيانات")
+            return
+
+        try:
+            # التأكد من وجود مكتبة python-docx
+            if 'Document' not in globals():
+                messagebox.showerror("خطأ",
+                                     "لم يتم العثور على مكتبة python-docx. قم بتثبيتها باستخدام: pip install python-docx")
+                return
+
+            # الحصول على بيانات المتدربين في الفصل المحدد (فقط غير المستبعدين)
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT t.national_id, t.name, t.rank
+                FROM trainees t
+                JOIN student_sections s ON t.national_id = s.national_id
+                WHERE t.course=? AND s.section_name=? AND t.is_excluded=0
+                ORDER BY t.name
+            """, (course_name, section_name))
+            students_data = cursor.fetchall()
+
+            if not students_data:
+                messagebox.showinfo("ملاحظة",
+                                    f"لا يوجد متدربين نشطين مسجلين في فصل '{section_name}' من دورة '{course_name}'")
+                return
+
+            # إنشاء نافذة حالة لإظهار تقدم التصدير
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("جاري حساب المواظبة والسلوك")
+            progress_window.geometry("400x150")
+            progress_window.configure(bg=self.colors["light"])
+            progress_window.transient(self.root)
+            progress_window.resizable(False, False)
+            progress_window.grab_set()
+
+            x = (progress_window.winfo_screenwidth() - 400) // 2
+            y = (progress_window.winfo_screenheight() - 150) // 2
+            progress_window.geometry(f"400x150+{x}+{y}")
+
+            tk.Label(
+                progress_window,
+                text=f"جاري حساب نتائج المواظبة والسلوك لفصل: {section_name}",
+                font=self.fonts["text_bold"],
+                bg=self.colors["light"],
+                pady=10
+            ).pack()
+
+            progress_var = tk.DoubleVar()
+            progress_bar = ttk.Progressbar(
+                progress_window,
+                variable=progress_var,
+                maximum=100,
+                length=350
+            )
+            progress_bar.pack(pady=10)
+
+            status_label = tk.Label(
+                progress_window,
+                text="جاري تحليل بيانات الحضور والغياب...",
+                font=self.fonts["text"],
+                bg=self.colors["light"]
+            )
+            status_label.pack(pady=5)
+
+            progress_window.update()
+
+            # إنشاء مستند جديد
+            doc = Document()
+
+            # إعداد المستند للغة العربية (RTL)
+            section = doc.sections[0]
+            section.page_width = Inches(8.27)  # A4 width
+            section.page_height = Inches(11.69)  # A4 height
+            section.left_margin = Inches(0.7)
+            section.right_margin = Inches(0.7)
+            section.top_margin = Inches(0.7)
+            section.bottom_margin = Inches(0.7)
+
+            # إضافة عنوان المستند
+            title = doc.add_heading(f'بيان المواظبة والسلوك لمتدربين فصل: {section_name} - دورة: {course_name}',
+                                    level=0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in title.runs:
+                run.font.size = Pt(16)
+                run.font.bold = True
+                run.font.rtl = True
+
+            # إضافة معلومات الطباعة والتاريخ
+            date_info = doc.add_paragraph()
+            date_info.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            date_run = date_info.add_run(f'تاريخ الطباعة: {today_date}')
+            date_run.font.size = Pt(10)
+            date_run.font.rtl = True
+
+            # إضافة خط أفقي
+            border_paragraph = doc.add_paragraph()
+            border_paragraph.paragraph_format.border_bottom = True
+
+            # إنشاء جدول للمواظبة والسلوك
+            table = doc.add_table(rows=1, cols=6)
+            table.style = 'Table Grid'
+
+            # عناوين الجدول (من اليمين إلى اليسار)
+            hdr_cells = table.rows[0].cells
+            headers = ["عدد", "الاسم", "الرتبة", "رقم الهوية", "المواظبة", "السلوك"]
+
+            for i, header in enumerate(headers):
+                # حساب الموقع المناسب للعناوين (من اليمين إلى اليسار)
+                idx = len(headers) - i - 1
+                hdr_cells[idx].text = header
+                hdr_cells[idx].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in hdr_cells[idx].paragraphs[0].runs:
+                    run.font.bold = True
+                    run.font.size = Pt(12)
+                    run.font.rtl = True
+
+                # تطبيق تظليل للرأس
+                try:
+                    shading_elm = parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls('w')))
+                    hdr_cells[idx]._element.get_or_add_tcPr().append(shading_elm)
+                except:
+                    pass
+
+            # معالجة بيانات كل متدرب وحساب درجة المواظبة
+            student_scores = []
+            total_students = len(students_data)
+
+            for index, student in enumerate(students_data):
+                national_id, name, rank = student
+
+                # تحديث شريط التقدم
+                progress_var.set((index / total_students) * 80)  # 80% للمعالجة
+                status_label.config(text=f"معالجة المتدرب {index + 1} من {total_students}: {name}")
+                progress_window.update()
+
+                # حساب درجة المواظبة:
+                # 1. الدرجة الأولية هي 100
+                # 2. خصم 4 درجات لكل غياب كامل
+                # 3. خصم 1 درجة لكل تأخير
+                # 4. خصم 4 درجات لمعظم أنواع الغياب بعذر
+                # 5. خصم 2 درجة لإجازة الأبوة وحضور المحكمة كشاهد فقط
+
+                # الاستعلام عن حالات الحضور للمتدرب
+                cursor.execute("""
+                    SELECT status, excuse_reason
+                    FROM attendance
+                    WHERE national_id=?
+                """, (national_id,))
+                attendance_records = cursor.fetchall()
+
+                diligence_score = 100.0  # البداية من 100
+
+                for record in attendance_records:
+                    status = record[0]
+                    excuse_reason = record[1] if record[1] else ""
+
+                    if status == "غائب":
+                        diligence_score -= 4.0
+                    elif status == "متأخر":
+                        diligence_score -= 1.0
+                    elif status == "حالة وفاة" or status == "منوم":
+                        diligence_score -= 2.0
+                    elif status == "غائب بعذر":
+                        # معالجة الغياب بعذر حسب النوع
+                        if excuse_reason in ["إجازة أبوة", "حضور للمحكمة كشاهد"]:
+                            # خصم 2 درجة فقط لهذه الحالات
+                            diligence_score -= 2.0
+                        else:
+                            # خصم 4 درجات لباقي أنواع الغياب بعذر (إجازة مرضية وأخرى)
+                            diligence_score -= 4.0
+
+                # التأكد من عدم نزول الدرجة عن صفر
+                diligence_score = max(0, diligence_score)
+
+                # حفظ بيانات المتدرب مع الدرجة
+                student_scores.append((national_id, name, rank, diligence_score))
+
+            # ترتيب المتدربين تصاعدياً حسب درجة المواظبة (الأقل يأتي أولاً)
+            student_scores.sort(key=lambda x: x[3])
+
+            # إضافة بيانات المتدربين إلى الجدول بعد الترتيب
+            for index, (national_id, name, rank, diligence_score) in enumerate(student_scores):
+                # تحديث شريط التقدم
+                progress_var.set(80 + (index / total_students) * 15)  # 15% للترتيب والإضافة
+                status_label.config(text=f"إضافة المتدرب {index + 1} من {total_students} إلى التقرير")
+                progress_window.update()
+
+                # درجة السلوك دائمًا 100
+                behavior_score = 100.0
+
+                # إضافة صف جديد للمتدرب
+                row_cells = table.add_row().cells
+
+                # الترتيب من اليمين إلى اليسار
+                row_cells[5].text = str(index + 1)  # العدد التسلسلي
+                row_cells[4].text = name  # الاسم
+                row_cells[3].text = rank  # الرتبة
+                row_cells[2].text = national_id  # رقم الهوية
+                row_cells[1].text = f"{diligence_score:.1f}"  # المواظبة بدقة رقم عشري واحد
+                row_cells[0].text = f"{behavior_score:.0f}"  # السلوك (دائمًا 100)
+
+                # تنسيق الخلايا
+                for cell in row_cells:
+                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for run in cell.paragraphs[0].runs:
+                        run.font.rtl = True
+                        run.font.size = Pt(11)
+
+                # تلوين الصف حسب درجة المواظبة
+                if diligence_score < 90:  # إذا كانت الدرجة أقل من 90، تمييزها بلون فاتح
+                    try:
+                        for cell in row_cells:
+                            shading_elm = parse_xml(r'<w:shd {} w:fill="FFDDDD"/>'.format(nsdecls('w')))
+                            cell._element.get_or_add_tcPr().append(shading_elm)
+                    except:
+                        pass
+
+            # تنسيق الجدول
+            table.autofit = False
+            try:
+                # تعيين عرض الأعمدة (العرض بالبوصة)
+                widths
