@@ -321,7 +321,7 @@ def export_official_completion(self):
         courses_data = cursor.fetchall()
 
         if not courses_data:
-            messagebox.showinfo("تنبيه", "لا توجد دورات نشطة لتصدير التكميل الرسمي")
+            messagebox.showinfo("تنبيه", "لا يوجد دورات نشطة لتصدير التكميل الرسمي")
             return
 
         # حساب الإحصائيات لكل فئة
@@ -351,7 +351,6 @@ def export_official_completion(self):
             stats[course_category]['students'] += cursor.fetchone()[0]
 
             # إحصائيات الحضور المعدلة لليوم المحدد
-            # تعديل الاستعلام لاحتساب الغياب بعذر بشكل صحيح
             cursor.execute("""
                 SELECT 
                     a.status,
@@ -444,14 +443,27 @@ def export_official_completion(self):
                         "ملاحظة": note
                     })
                     row_num += 1
+                elif excuse_reason and ("إجازة أبوة" in excuse_reason or "حضور للمحكمة كشاهد" in excuse_reason):
+                    # إجازة أبوة وحضور للمحكمة كشاهد يظهران كغياب مع توضيح النوع
+                    note = f"غياب {category}"
+                    if "إجازة أبوة" in excuse_reason:
+                        note += " - إجازة أبوة"
+                    elif "حضور للمحكمة كشاهد" in excuse_reason:
+                        note += " - حضور للمحكمة كشاهد"
+                    details_data.append({
+                        "العدد": row_num,
+                        "الاسم": name,
+                        "رقم الهوية": national_id,
+                        "ملاحظة": note
+                    })
+                    row_num += 1
                 else:
                     # جميع أنواع الغياب بعذر الأخرى تظهر كغياب
                     note = f"غياب {category}"
                     if excuse_reason:
                         # إضافة نوع العذر إن وجد
-                        excuse_text = excuse_reason.replace("[يظهر في التكميل]", "").replace("[لا يظهر في التكميل]",
-                                                                                             "").strip()
-                        if excuse_text and excuse_text not in ["إجازة أبوة", "حضور للمحكمة كشاهد"]:
+                        excuse_text = excuse_reason.replace("[يظهر في التكميل]", "").replace("[لا يظهر في التكميل]", "").strip()
+                        if excuse_text and "[يظهر في التكميل]" in excuse_reason:
                             note += f" - {excuse_text}"
                     details_data.append({
                         "العدد": row_num,
@@ -557,13 +569,10 @@ def export_official_completion(self):
 
             # إضافة العنوان الرئيسي
             stats_sheet.merge_cells('A1:E1')
-            stats_sheet[
-                'A1'] = f"التكميل اليومي لدورات التخصصية المنعقدة بمدنية تدريب الأمن العام بالمنطقة الشرقية ليوم {day_arabic} الموافق {date_formatted}"
+            stats_sheet['A1'] = f"التكميل اليومي لدورات التخصصية المنعقدة بمدنية تدريب الأمن العام بالمنطقة الشرقية ليوم {day_arabic} الموافق {date_formatted}"
             stats_sheet['A1'].font = openpyxl.styles.Font(bold=True, size=14)
-            stats_sheet['A1'].alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center",
-                                                                    wrap_text=True)
-            stats_sheet['A1'].fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0",
-                                                                 fill_type="solid")
+            stats_sheet['A1'].alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center", wrap_text=True)
+            stats_sheet['A1'].fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
             # تنسيق الرؤوس
             for row in stats_sheet['A3:E3']:
@@ -592,8 +601,7 @@ def export_official_completion(self):
                     # تنسيق العمود الأول (التسميات)
                     if cell.column == 1:
                         cell.font = openpyxl.styles.Font(bold=True)
-                        cell.fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0",
-                                                                fill_type="solid")
+                        cell.fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
             # ضبط عرض الأعمدة
             column_widths = {'A': 20, 'B': 15, 'C': 15, 'D': 15, 'E': 15}
@@ -608,10 +616,8 @@ def export_official_completion(self):
             details_sheet.merge_cells('A1:D1')
             details_sheet['A1'] = f"إيضاح و ملاحظات التكميل ليوم {day_arabic} و تاريخ {date_formatted}"
             details_sheet['A1'].font = openpyxl.styles.Font(bold=True, size=14)
-            details_sheet['A1'].alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center",
-                                                                      wrap_text=True)
-            details_sheet['A1'].fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0",
-                                                                   fill_type="solid")
+            details_sheet['A1'].alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center", wrap_text=True)
+            details_sheet['A1'].fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
 
             # تنسيق الرؤوس
             for row in details_sheet['A3:D3']:
