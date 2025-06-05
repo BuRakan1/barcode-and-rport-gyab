@@ -1736,21 +1736,23 @@ def open_edit_attendance_window(self, attendance_id, row_values):
         messagebox.showwarning("تنبيه", "ليس لديك صلاحية تعديل سجلات الحضور")
         return
 
-    # الحصول على الحالة الأصلية للمتدرب
+    # الحصول على الحالة الأصلية والسبب الحالي للمتدرب
     cursor = self.conn.cursor()
-    cursor.execute("SELECT original_status FROM attendance WHERE id=?", (attendance_id,))
-    original_status = cursor.fetchone()[0]
+    cursor.execute("SELECT original_status, excuse_reason FROM attendance WHERE id=?", (attendance_id,))
+    result = cursor.fetchone()
+    original_status = result[0]
+    current_excuse_reason = result[1] if result[1] else ""
 
     edit_window = tk.Toplevel(self.root)
     edit_window.title("تعديل حالة الحضور")
-    edit_window.geometry("500x450")
+    edit_window.geometry("500x550")  # زيادة ارتفاع النافذة
     edit_window.configure(bg=self.colors["light"])
     edit_window.transient(self.root)
     edit_window.grab_set()
 
     x = (edit_window.winfo_screenwidth() - 500) // 2
-    y = (edit_window.winfo_screenheight() - 450) // 2
-    edit_window.geometry(f"500x450+{x}+{y}")
+    y = (edit_window.winfo_screenheight() - 550) // 2
+    edit_window.geometry(f"500x550+{x}+{y}")
 
     tk.Label(edit_window, text="تعديل حالة الحضور", font=self.fonts["title"], bg=self.colors["primary"],
              fg="white", padx=10, pady=10, width=500).pack(fill=tk.X)
@@ -1778,12 +1780,72 @@ def open_edit_attendance_window(self, attendance_id, row_values):
                                    state="readonly", font=self.fonts["text"])
     status_combobox.pack(fill=tk.X, padx=5, pady=5)
 
-    # إطار أسباب الغياب
-    reason_frame = tk.Frame(edit_window, bg=self.colors["light"], padx=20, pady=5)
-    reason_frame.pack(fill=tk.X)
+    # إطار خيارات الغياب بعذر
+    excuse_options_frame = tk.Frame(edit_window, bg=self.colors["light"], padx=20, pady=5)
 
-    reason_label = tk.Label(reason_frame, text="سبب الغياب:", font=self.fonts["text"], bg=self.colors["light"])
-    reason_entry = tk.Entry(reason_frame, font=self.fonts["text"], width=40)
+    # إطار للخيارات الافتراضية
+    default_excuses_frame = tk.Frame(excuse_options_frame, bg=self.colors["light"])
+
+    excuse_type_var = tk.StringVar(value="إجازة مرضية")
+
+    # الخيارات الأربعة للغياب بعذر
+    excuses = [
+        ("إجازة مرضية", "إجازة مرضية"),
+        ("إجازة أبوة", "إجازة أبوة"),
+        ("حضور للمحكمة كشاهد", "حضور للمحكمة كشاهد"),
+        ("أخرى", "other")
+    ]
+
+    for text, value in excuses:
+        tk.Radiobutton(
+            default_excuses_frame,
+            text=text,
+            variable=excuse_type_var,
+            value=value,
+            font=self.fonts["text"],
+            bg=self.colors["light"],
+            activebackground=self.colors["light"]
+        ).pack(anchor=tk.W, pady=2)
+
+    # إطار لإدخال السبب المخصص
+    custom_reason_frame = tk.Frame(excuse_options_frame, bg=self.colors["light"])
+
+    custom_reason_label = tk.Label(
+        custom_reason_frame,
+        text="أدخل سبب الغياب بعذر:",
+        font=self.fonts["text"],
+        bg=self.colors["light"]
+    )
+    custom_reason_entry = tk.Entry(
+        custom_reason_frame,
+        font=self.fonts["text"],
+        width=35
+    )
+
+    # خيار الظهور في التكميل الرسمي
+    show_in_completion_var = tk.BooleanVar(value=False)
+    show_in_completion_check = tk.Checkbutton(
+        custom_reason_frame,
+        text="هل تريد أن يظهر في التكميل الرسمي؟",
+        variable=show_in_completion_var,
+        font=self.fonts["text"],
+        bg=self.colors["light"],
+        activebackground=self.colors["light"]
+    )
+
+    def toggle_custom_fields(*args):
+        """إظهار/إخفاء حقل السبب المخصص"""
+        if excuse_type_var.get() == "other":
+            custom_reason_frame.pack(fill=tk.X, pady=5)
+            custom_reason_label.pack(anchor=tk.W)
+            custom_reason_entry.pack(fill=tk.X, pady=5)
+            show_in_completion_check.pack(anchor=tk.W, pady=5)
+            custom_reason_entry.focus_set()
+        else:
+            custom_reason_frame.pack_forget()
+
+    # ربط تغيير الخيار
+    excuse_type_var.trace("w", toggle_custom_fields)
 
     # إطار سبب التعديل
     mod_reason_frame = tk.Frame(edit_window, bg=self.colors["light"], padx=20, pady=5)
@@ -1794,13 +1856,29 @@ def open_edit_attendance_window(self, attendance_id, row_values):
     mod_reason_entry = tk.Entry(mod_reason_frame, font=self.fonts["text"], width=40)
 
     def on_status_change(*args):
-        # إظهار حقل سبب الغياب إذا كانت الحالة "غائب بعذر"
+        # إظهار خيارات الغياب بعذر إذا كانت الحالة "غائب بعذر"
         if status_var.get() == "غائب بعذر":
-            reason_label.pack(anchor=tk.W)
-            reason_entry.pack(fill=tk.X, pady=5)
+            excuse_options_frame.pack(fill=tk.X, after=new_status_frame)
+            default_excuses_frame.pack(fill=tk.X, pady=5)
+
+            # إذا كان هناك سبب موجود مسبقاً، حاول تحديد الخيار المناسب
+            if current_excuse_reason:
+                if "إجازة مرضية" in current_excuse_reason:
+                    excuse_type_var.set("إجازة مرضية")
+                elif "إجازة أبوة" in current_excuse_reason:
+                    excuse_type_var.set("إجازة أبوة")
+                elif "حضور للمحكمة كشاهد" in current_excuse_reason:
+                    excuse_type_var.set("حضور للمحكمة كشاهد")
+                else:
+                    excuse_type_var.set("other")
+                    custom_reason_entry.insert(0, current_excuse_reason.replace("[يظهر في التكميل]", "").replace(
+                        "[لا يظهر في التكميل]", "").strip())
+                    if "[يظهر في التكميل]" in current_excuse_reason:
+                        show_in_completion_var.set(True)
+
+            toggle_custom_fields()
         else:
-            reason_label.pack_forget()
-            reason_entry.pack_forget()
+            excuse_options_frame.pack_forget()
 
         # إظهار حقل سبب التعديل فقط إذا كانت الحالة الجديدة مختلفة عن الحالة الأصلية
         if status_var.get() != original_status:
@@ -1819,7 +1897,27 @@ def open_edit_attendance_window(self, attendance_id, row_values):
 
     def save_changes():
         new_status = status_var.get()
-        new_reason = reason_entry.get().strip() if new_status == "غائب بعذر" else ""
+
+        # معالجة سبب الغياب بعذر
+        new_reason = ""
+        if new_status == "غائب بعذر":
+            if excuse_type_var.get() == "other":
+                custom_text = custom_reason_entry.get().strip()
+                if not custom_text:
+                    messagebox.showwarning("تنبيه", "الرجاء إدخال سبب الغياب بعذر")
+                    return
+                if show_in_completion_var.get():
+                    new_reason = f"{custom_text} [يظهر في التكميل]"
+                else:
+                    new_reason = f"{custom_text} [لا يظهر في التكميل]"
+            else:
+                new_reason = excuse_type_var.get()
+        elif new_status in ["حالة وفاة", "منوم"]:
+            # الاحتفاظ بالسبب الأصلي للحالات الخاصة
+            new_reason = current_excuse_reason
+        else:
+            new_reason = ""
+
         modification_reason = mod_reason_entry.get().strip() if new_status != original_status else ""
 
         # التحقق من عمر السجل
@@ -1938,7 +2036,6 @@ def open_edit_attendance_window(self, attendance_id, row_values):
                            bg=self.colors["danger"], fg="white", padx=15, pady=5, bd=0,
                            relief=tk.FLAT, cursor="hand2", command=edit_window.destroy)
     cancel_btn.pack(side=tk.RIGHT, padx=5)
-
 
 def add_students_to_existing_course(self):
     """إضافة متدربين جدد لدورة موجودة مع خيار لتعيين الفصل مباشرة"""
