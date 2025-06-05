@@ -324,7 +324,7 @@ def export_official_completion(self):
             messagebox.showinfo("تنبيه", "لا توجد دورات نشطة لتصدير التكميل الرسمي")
             return
 
-        # حساب الإحصائيات لكل فئة (حذف فئة "طلبة")
+        # حساب الإحصائيات لكل فئة
         categories = ["ضباط", "أفراد", "مشتركة", "مدنيين"]
         stats = {cat: {
             'courses': set(),
@@ -350,28 +350,41 @@ def export_official_completion(self):
             """, (course_name, selected_date))
             stats[course_category]['students'] += cursor.fetchone()[0]
 
-            # إحصائيات الحضور لليوم المحدد فقط
+            # إحصائيات الحضور المعدلة لليوم المحدد
+            # تعديل الاستعلام لاحتساب الغياب بعذر بشكل صحيح
             cursor.execute("""
                 SELECT 
-                    SUM(CASE WHEN a.status = 'غائب' THEN 1 ELSE 0 END) as absent,
-                    SUM(CASE WHEN a.status = 'متأخر' THEN 1 ELSE 0 END) as late,
-                    SUM(CASE WHEN a.status = 'منوم' THEN 1 ELSE 0 END) as sick,
-                    SUM(CASE WHEN a.status = 'لم يباشر' THEN 1 ELSE 0 END) as not_started,
-                    SUM(CASE WHEN a.status = 'حالة وفاة' THEN 1 ELSE 0 END) as death_case
+                    a.status,
+                    a.excuse_reason,
+                    COUNT(*) as count
                 FROM attendance a
                 JOIN trainees t ON a.national_id = t.national_id
                 WHERE t.course = ? 
                 AND (t.is_excluded = 0 OR (t.is_excluded = 1 AND t.excluded_date > ?))
                 AND a.date = ?
+                GROUP BY a.status, a.excuse_reason
             """, (course_name, selected_date, selected_date))
 
-            result = cursor.fetchone()
-            if result:
-                # حالة الوفاة تُحسب مع الغياب
-                stats[course_category]['absent'] += (result[0] or 0) + (result[4] or 0)
-                stats[course_category]['late'] += result[1] or 0
-                stats[course_category]['sick_leave'] += result[2] or 0  # منوم فقط
-                stats[course_category]['not_started'] += result[3] or 0
+            results = cursor.fetchall()
+
+            for status, excuse_reason, count in results:
+                if status == "غائب":
+                    stats[course_category]['absent'] += count
+                elif status == "متأخر":
+                    stats[course_category]['late'] += count
+                elif status == "منوم":
+                    stats[course_category]['sick_leave'] += count
+                elif status == "لم يباشر":
+                    stats[course_category]['not_started'] += count
+                elif status == "حالة وفاة":
+                    stats[course_category]['absent'] += count  # تُحسب مع الغياب
+                elif status == "غائب بعذر":
+                    # معالجة الغياب بعذر حسب نوع العذر
+                    if excuse_reason and "إجازة مرضية" in excuse_reason:
+                        stats[course_category]['sick_leave'] += count
+                    else:
+                        # جميع أنواع الغياب بعذر الأخرى تُحسب كغياب
+                        stats[course_category]['absent'] += count
 
         # إنشاء DataFrame للإحصائيات
         stats_data = []
@@ -421,30 +434,32 @@ def export_official_completion(self):
         for name, national_id, status, excuse_reason, category in cursor.fetchall():
             # معالجة الغياب بعذر حسب النوع
             if status == "غائب بعذر":
-                # التحقق من نوع العذر
-                if excuse_reason:
-                    if excuse_reason in ["إجازة مرضية", "إجازة أبوة", "حضور للمحكمة كشاهد"]:
-                        # هذه الأنواع تظهر في التكميل الرسمي
-                        note = f"{excuse_reason} {category}"
-                        details_data.append({
-                            "العدد": row_num,
-                            "الاسم": name,
-                            "رقم الهوية": national_id,
-                            "ملاحظة": note
-                        })
-                        row_num += 1
-                    elif "[يظهر في التكميل]" in excuse_reason:
-                        # أعذار أخرى مع الموافقة على الظهور
-                        excuse_text = excuse_reason.replace("[يظهر في التكميل]", "").strip()
-                        note = f"غياب بعذر {category} - {excuse_text}"
-                        details_data.append({
-                            "العدد": row_num,
-                            "الاسم": name,
-                            "رقم الهوية": national_id,
-                            "ملاحظة": note
-                        })
-                        row_num += 1
-                    # إذا كان العذر "[لا يظهر في التكميل]" فلا نضيفه للتفاصيل
+                if excuse_reason and "إجازة مرضية" in excuse_reason:
+                    # إجازة مرضية تظهر في خانة الإجازات المرضية
+                    note = f"إجازة مرضية {category}"
+                    details_data.append({
+                        "العدد": row_num,
+                        "الاسم": name,
+                        "رقم الهوية": national_id,
+                        "ملاحظة": note
+                    })
+                    row_num += 1
+                else:
+                    # جميع أنواع الغياب بعذر الأخرى تظهر كغياب
+                    note = f"غياب {category}"
+                    if excuse_reason:
+                        # إضافة نوع العذر إن وجد
+                        excuse_text = excuse_reason.replace("[يظهر في التكميل]", "").replace("[لا يظهر في التكميل]",
+                                                                                             "").strip()
+                        if excuse_text and excuse_text not in ["إجازة أبوة", "حضور للمحكمة كشاهد"]:
+                            note += f" - {excuse_text}"
+                    details_data.append({
+                        "العدد": row_num,
+                        "الاسم": name,
+                        "رقم الهوية": national_id,
+                        "ملاحظة": note
+                    })
+                    row_num += 1
             elif status == "غائب":
                 note = f"غياب {category}"
                 details_data.append({
@@ -509,7 +524,7 @@ def export_official_completion(self):
 
         df_details = pd.DataFrame(details_data)
 
-        # كتابة البيانات إلى Excel
+        # كتابة البيانات إلى Excel (باقي الكود كما هو)
         with pd.ExcelWriter(export_file, engine='openpyxl') as writer:
             # كتابة صفحة الإحصائيات
             df_stats.to_excel(writer, sheet_name='الإحصائيات', index=False, startrow=2)
@@ -517,7 +532,7 @@ def export_official_completion(self):
             # كتابة صفحة التفاصيل
             df_details.to_excel(writer, sheet_name='التفاصيل', index=False, startrow=2)
 
-            # تنسيق الصفحات
+            # تنسيق الصفحات (باقي الكود كما هو)
             workbook = writer.book
 
             # الحصول على اليوم والتاريخ
@@ -540,8 +555,8 @@ def export_official_completion(self):
             stats_sheet = workbook['الإحصائيات']
             stats_sheet.sheet_view.rightToLeft = True
 
-            # إضافة العنوان الرئيسي - تأكد من دمج الخلايا الصحيحة فقط
-            stats_sheet.merge_cells('A1:E1')  # من A إلى E فقط (5 أعمدة: م + 4 فئات)
+            # إضافة العنوان الرئيسي
+            stats_sheet.merge_cells('A1:E1')
             stats_sheet[
                 'A1'] = f"التكميل اليومي لدورات التخصصية المنعقدة بمدنية تدريب الأمن العام بالمنطقة الشرقية ليوم {day_arabic} الموافق {date_formatted}"
             stats_sheet['A1'].font = openpyxl.styles.Font(bold=True, size=14)
@@ -550,12 +565,11 @@ def export_official_completion(self):
             stats_sheet['A1'].fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0",
                                                                  fill_type="solid")
 
-            # تنسيق الرؤوس - فقط 5 أعمدة
+            # تنسيق الرؤوس
             for row in stats_sheet['A3:E3']:
                 for cell in row:
                     cell.font = openpyxl.styles.Font(bold=True, size=12)
-                    cell.fill = openpyxl.styles.PatternFill(start_color="4CAF50", end_color="4CAF50",
-                                                            fill_type="solid")
+                    cell.fill = openpyxl.styles.PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
                     cell.font = openpyxl.styles.Font(bold=True, color="FFFFFF", size=12)
                     cell.alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center")
                     cell.border = openpyxl.styles.Border(
@@ -565,7 +579,7 @@ def export_official_completion(self):
                         bottom=openpyxl.styles.Side(style='thin')
                     )
 
-            # تنسيق البيانات - فقط 5 أعمدة
+            # تنسيق البيانات
             for row in stats_sheet.iter_rows(min_row=4, max_row=stats_sheet.max_row, min_col=1, max_col=5):
                 for cell in row:
                     cell.alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center")
@@ -581,7 +595,7 @@ def export_official_completion(self):
                         cell.fill = openpyxl.styles.PatternFill(start_color="E0E0E0", end_color="E0E0E0",
                                                                 fill_type="solid")
 
-            # ضبط عرض الأعمدة بطريقة صحيحة - 5 أعمدة فقط
+            # ضبط عرض الأعمدة
             column_widths = {'A': 20, 'B': 15, 'C': 15, 'D': 15, 'E': 15}
             for col_letter, width in column_widths.items():
                 stats_sheet.column_dimensions[col_letter].width = width
@@ -603,8 +617,7 @@ def export_official_completion(self):
             for row in details_sheet['A3:D3']:
                 for cell in row:
                     cell.font = openpyxl.styles.Font(bold=True, size=12)
-                    cell.fill = openpyxl.styles.PatternFill(start_color="4CAF50", end_color="4CAF50",
-                                                            fill_type="solid")
+                    cell.fill = openpyxl.styles.PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
                     cell.font = openpyxl.styles.Font(bold=True, color="FFFFFF", size=12)
                     cell.alignment = openpyxl.styles.Alignment(horizontal="center", vertical="center")
                     cell.border = openpyxl.styles.Border(
